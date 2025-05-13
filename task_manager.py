@@ -12,9 +12,61 @@ from logging.handlers import RotatingFileHandler
 
 logger = logging.getLogger(__name__)
 
+class TaskGroup:
+    """任务组类，用于管理一组按顺序执行的任务"""
+    
+    def __init__(self, group_id, name, task_ids=None, scheduler=None, task_manager=None):
+        self.id = group_id
+        self.name = name
+        self.task_ids = task_ids or []  # 按顺序存储的任务ID列表
+        self.status = 'created'  # created, running, stopped, completed, error
+        self.job_id = None
+        self.created_at = datetime.datetime.now().isoformat()
+        self.last_run = None
+        self.next_run = None
+        self.run_count = 0
+        self.current_task_index = 0  # 当前执行到的任务索引
+        self.scheduler = scheduler
+        self.task_manager = task_manager
+    
+    def to_dict(self):
+        """转换为字典表示"""
+        return {
+            'id': self.id,
+            'name': self.name,
+            'task_ids': self.task_ids,
+            'status': self.status,
+            'job_id': self.job_id,
+            'created_at': self.created_at,
+            'last_run': self.last_run,
+            'next_run': self.next_run,
+            'run_count': self.run_count,
+            'current_task_index': self.current_task_index
+        }
+    
+    def add_task(self, task_id):
+        """添加任务到任务组"""
+        if task_id not in self.task_ids:
+            self.task_ids.append(task_id)
+        return self.to_dict()
+    
+    def remove_task(self, task_id):
+        """从任务组中移除任务"""
+        if task_id in self.task_ids:
+            self.task_ids.remove(task_id)
+        return self.to_dict()
+    
+    def reorder_tasks(self, task_ids):
+        """重新排序任务组中的任务"""
+        # 确保所有提供的任务ID都在当前任务组中
+        if all(task_id in self.task_ids for task_id in task_ids) and len(task_ids) == len(self.task_ids):
+            self.task_ids = task_ids
+        return self.to_dict()
+
 class TaskManager:
     def __init__(self):
         self.tasks = {}
+        self.task_groups = {}  # 存储任务组
         self.scheduler = None
         self.task_logger = self._setup_task_logger()
     
@@ -42,6 +94,328 @@ class TaskManager:
         """设置调度器"""
         self.scheduler = scheduler
     
+    # 任务组相关方法
+    def create_task_group(self, name, task_ids=None):
+        """创建新的任务组
+        
+        Args:
+            name: 任务组名称
+            task_ids: 要添加到任务组的任务ID列表（按执行顺序）
+        
+        Returns:
+            包含任务组ID的字典
+        """
+        # 验证所有任务ID是否存在
+        if task_ids:
+            for task_id in task_ids:
+                if task_id not in self.tasks:
+                    return {'error': f'任务ID {task_id} 不存在'}, 404
+        
+        group_id = str(uuid.uuid4())
+        task_group = TaskGroup(
+            group_id=group_id,
+            name=name,
+            task_ids=task_ids or [],
+            scheduler=self.scheduler,
+            task_manager=self
+        )
+        
+        self.task_groups[group_id] = task_group
+        self.task_logger.info(f"创建了新任务组: {name} (ID: {group_id})")
+        
+        return {'id': group_id, 'status': 'created'}
+    
+    def get_all_task_groups(self):
+        """获取所有任务组"""
+        return {'task_groups': [group.to_dict() for group in self.task_groups.values()]}
+    
+    def get_task_group(self, group_id):
+        """获取特定任务组的详情"""
+        task_group = self.task_groups.get(group_id)
+        if not task_group:
+            return {'error': '任务组不存在'}, 404
+        
+        # 如果任务组正在运行中，更新下次运行时间
+        if task_group.status == 'running' and task_group.job_id:
+            job = self.scheduler.get_job(task_group.job_id)
+            if job:
+                task_group.next_run = job.next_run_time.isoformat() if job.next_run_time else None
+        
+        return task_group.to_dict()
+    
+    def update_task_group(self, group_id, data):
+        """更新任务组配置"""
+        task_group = self.task_groups.get(group_id)
+        if not task_group:
+            return {'error': '任务组不存在'}, 404
+        
+        # 如果任务组在运行，先停止
+        if task_group.status == 'running':
+            self.stop_task_group(group_id)
+        
+        # 更新任务组名称
+        if 'name' in data and data['name']:
+            task_group.name = data['name']
+        
+        # 更新任务列表
+        if 'task_ids' in data and isinstance(data['task_ids'], list):
+            # 验证所有任务ID是否存在
+            for task_id in data['task_ids']:
+                if task_id not in self.tasks:
+                    return {'error': f'任务ID {task_id} 不存在'}, 404
+            
+            task_group.task_ids = data['task_ids']
+        
+        self.task_logger.info(f"更新了任务组配置: {task_group.name} (ID: {group_id})")
+        return task_group.to_dict()
+    
+    def delete_task_group(self, group_id):
+        """删除任务组"""
+        task_group = self.task_groups.get(group_id)
+        if not task_group:
+            return {'error': '任务组不存在'}, 404
+        
+        # 如果任务组在运行，先停止
+        if task_group.status == 'running':
+            self.stop_task_group(group_id)
+        
+        # 从任务组列表中删除
+        del self.task_groups[group_id]
+        
+        self.task_logger.info(f"删除了任务组: {task_group.name} (ID: {group_id})")
+        return {'status': 'deleted'}
+    
+    def add_task_to_group(self, group_id, task_id):
+        """将任务添加到任务组中"""
+        task_group = self.task_groups.get(group_id)
+        if not task_group:
+            return {'error': '任务组不存在'}, 404
+        
+        if task_id not in self.tasks:
+            return {'error': '任务不存在'}, 404
+        
+        result = task_group.add_task(task_id)
+        self.task_logger.info(f"将任务 {task_id} 添加到任务组: {task_group.name} (ID: {group_id})")
+        return result
+    
+    def remove_task_from_group(self, group_id, task_id):
+        """从任务组中移除任务"""
+        task_group = self.task_groups.get(group_id)
+        if not task_group:
+            return {'error': '任务组不存在'}, 404
+        
+        result = task_group.remove_task(task_id)
+        self.task_logger.info(f"从任务组 {task_group.name} (ID: {group_id}) 中移除任务 {task_id}")
+        return result
+    
+    def reorder_tasks_in_group(self, group_id, task_ids):
+        """重新排序任务组中的任务"""
+        task_group = self.task_groups.get(group_id)
+        if not task_group:
+            return {'error': '任务组不存在'}, 404
+        
+        # 验证所有任务ID是否在任务组中
+        for task_id in task_ids:
+            if task_id not in task_group.task_ids:
+                return {'error': f'任务ID {task_id} 不在任务组中'}, 400
+        
+        # 验证任务数量是否匹配
+        if len(task_ids) != len(task_group.task_ids):
+            return {'error': '任务数量不匹配'}, 400
+        
+        result = task_group.reorder_tasks(task_ids)
+        self.task_logger.info(f"重新排序任务组 {task_group.name} (ID: {group_id}) 中的任务")
+        return result
+    
+    def start_task_group(self, group_id, config):
+        """启动任务组
+        
+        Args:
+            group_id: 任务组ID
+            config: 包含任务配置的字典，如开始时间、结束时间、间隔等
+        """
+        task_group = self.task_groups.get(group_id)
+        if not task_group:
+            return {'error': '任务组不存在'}, 404
+        
+        if task_group.status == 'running':
+            return {'error': '任务组已在运行中'}, 400
+        
+        if not task_group.task_ids:
+            return {'error': '任务组中没有任务'}, 400
+        
+        # 构建触发器
+        trigger = self._build_trigger(config)
+        # 检查触发器是否为字典类型，如果是则说明返回了错误信息
+        if isinstance(trigger, dict) and 'error' in trigger:
+            return trigger, 400
+        
+        # 定义任务组执行包装函数
+        def group_job_func():
+            task_group.last_run = datetime.datetime.now().isoformat()
+            task_group.run_count += 1
+            task_group.current_task_index = 0
+            task_group.status = 'running'
+            
+            self.task_logger.info(f"开始执行定时任务组: {task_group.name} (ID: {group_id}), 包含 {len(task_group.task_ids)} 个任务")
+            
+            # 执行第一个任务
+            self._execute_next_task_in_group(task_group)
+            
+            return True
+        
+        # 添加任务组到调度器
+        job = self.scheduler.add_job(
+            group_job_func,
+            trigger=trigger,
+            id=f"group_{group_id}",
+            name=f"TaskGroup: {task_group.name}"
+        )
+        
+        # 更新任务组状态
+        task_group.status = 'running'
+        task_group.job_id = job.id
+        task_group.next_run = job.next_run_time.isoformat() if job.next_run_time else None
+        
+        # 存储配置
+        trigger_info = ""
+        if 'interval' in config and config['interval']:
+            task_group.interval = config['interval']
+            trigger_info = f"间隔执行 {config['interval']} 秒"
+        if 'cron' in config and config['cron']:
+            task_group.cron = config['cron']
+            trigger_info = f"Cron表达式: {config['cron']}"
+        if 'start_time' in config and config['start_time']:
+            task_group.start_time = config['start_time']
+        if 'end_time' in config and config['end_time']:
+            task_group.end_time = config['end_time']
+            
+        self.task_logger.info(f"启动了任务组: {task_group.name} (ID: {group_id}), {trigger_info}, 下次执行时间: {task_group.next_run}")
+        return task_group.to_dict()
+    
+    def _execute_next_task_in_group(self, task_group):
+        """执行任务组中的下一个任务
+        
+        当一个任务执行完成后，会调用此方法执行下一个任务
+        """
+        # 检查是否所有任务都已执行完毕
+        if task_group.current_task_index >= len(task_group.task_ids):
+            task_group.status = 'completed'
+            self.task_logger.info(f"任务组执行完成: {task_group.name} (ID: {task_group.id})")
+            return
+        
+        # 获取当前要执行的任务ID
+        task_id = task_group.task_ids[task_group.current_task_index]
+        task = self.tasks.get(task_id)
+        
+        if not task:
+            self.task_logger.error(f"任务组 {task_group.name} (ID: {task_group.id}) 中的任务不存在: {task_id}")
+            task_group.status = 'error'
+            return
+        
+        # 查找并导入函数
+        func = self._get_function(task['function'])
+        if not func:
+            self.task_logger.error(f"任务组 {task_group.name} (ID: {task_group.id}) 中的任务函数不存在: {task['function']}")
+            task_group.status = 'error'
+            return
+        
+        try:
+            self.task_logger.info(f"任务组 {task_group.name} (ID: {task_group.id}) 正在执行任务 {task_group.current_task_index + 1}/{len(task_group.task_ids)}: {task['name']} (ID: {task_id})")
+            
+            # 更新任务的执行次数和最后执行时间
+            task['last_run'] = datetime.datetime.now().isoformat()
+            task['run_count'] += 1
+            
+            # 执行任务
+            result = func(**task['args'])
+            
+            self.task_logger.info(f"任务组 {task_group.name} (ID: {task_group.id}) 中的任务执行成功: {task['name']} (ID: {task_id}), 结果: {str(result)[:100]}")
+            
+            # 移动到下一个任务
+            task_group.current_task_index += 1
+            
+            # 执行下一个任务
+            self._execute_next_task_in_group(task_group)
+            
+        except Exception as e:
+            error_msg = f"任务组 {task_group.name} (ID: {task_group.id}) 中的任务执行失败: {task['name']} (ID: {task_id}), 错误: {str(e)}"
+            self.task_logger.error(error_msg)
+            task_group.status = 'error'
+    
+    def stop_task_group(self, group_id):
+        """停止任务组"""
+        task_group = self.task_groups.get(group_id)
+        if not task_group:
+            return {'error': '任务组不存在'}, 404
+        
+        if task_group.status != 'running':
+            return {'error': '任务组未运行'}, 400
+        
+        # 从调度器中移除任务组
+        if task_group.job_id:
+            self.scheduler.remove_job(task_group.job_id)
+        
+        # 更新任务组状态
+        task_group.status = 'stopped'
+        task_group.next_run = None
+        
+        self.task_logger.info(f"停止了任务组: {task_group.name} (ID: {group_id})")
+        return task_group.to_dict()
+    
+    def execute_task_group_now(self, group_id):
+        """立即执行任务组"""
+        task_group = self.task_groups.get(group_id)
+        if not task_group:
+            return {'error': '任务组不存在'}, 404
+        
+        if not task_group.task_ids:
+            return {'error': '任务组中没有任务'}, 400
+        
+        if task_group.status == 'running':
+            return {'error': '任务组已在运行中'}, 400
+        
+        # 先检查所有任务是否存在
+        for task_id in task_group.task_ids:
+            if task_id not in self.tasks:
+                error_msg = f"任务组 {task_group.name} (ID: {group_id}) 中的任务不存在: {task_id}"
+                self.task_logger.error(error_msg)
+                task_group.status = 'error'
+                return {
+                    'error': error_msg,
+                    'status': 'error',
+                    'task_group': task_group.to_dict()
+                }, 400
+        
+        # 设置执行状态
+        task_group.status = 'running'
+        task_group.last_run = datetime.datetime.now().isoformat()
+        task_group.run_count += 1
+        task_group.current_task_index = 0
+        
+        self.task_logger.info(f"开始立即执行任务组: {task_group.name} (ID: {group_id}), 包含 {len(task_group.task_ids)} 个任务")
+        
+        # 在新线程中执行任务组，避免阻塞当前请求
+        import threading
+        def run_group():
+            try:
+                self._execute_next_task_in_group(task_group)
+            except Exception as e:
+                self.task_logger.error(f"任务组执行出错: {task_group.name} (ID: {group_id}), 错误: {str(e)}")
+                task_group.status = 'error'
+        
+        thread = threading.Thread(target=run_group)
+        thread.daemon = True
+        thread.start()
+        
+        # 返回结果中包含更新后的任务组状态，以便前端能正确显示
+        return {
+            'status': 'executing', 
+            'message': f'正在执行任务组: {task_group.name} (ID: {group_id})',
+            'task_group': task_group.to_dict()
+        }
+
+    # 以下是原来的任务相关方法
     def create_task(self, name, function_name, args=None):
         """创建新任务
         

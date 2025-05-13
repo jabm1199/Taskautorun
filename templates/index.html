@@ -12,49 +12,115 @@
     <div class="container mt-4">
         <h1 class="text-center mb-4">自动化定时任务管理系统</h1>
         
-        <div class="row mb-4">
-            <div class="col-12">
-                <div class="d-flex justify-content-between align-items-center">
-                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createTaskModal">
-                        <i class="fas fa-plus"></i> 新建任务
-                    </button>
-                    <div>
-                        <button class="btn btn-info me-2" onclick="viewAllLogs()">
-                            <i class="fas fa-list-alt"></i> 查看全局日志
-                        </button>
-                        <button class="btn btn-secondary" id="refreshBtn">
-                            <i class="fas fa-sync-alt"></i> 刷新列表
-                        </button>
+        <!-- 全局日志按钮 -->
+        <div class="text-end mb-3">
+            <button class="btn btn-info" onclick="viewAllLogs()">
+                <i class="fas fa-list-alt"></i> 查看全局日志
+            </button>
+        </div>
+        
+        <!-- 切换任务/任务组的标签页 -->
+        <ul class="nav nav-tabs mb-4" id="myTab" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="tasks-tab" data-bs-toggle="tab" data-bs-target="#tasks-tab-pane" type="button" role="tab" aria-controls="tasks-tab-pane" aria-selected="true">单个任务</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="taskgroups-tab" data-bs-toggle="tab" data-bs-target="#taskgroups-tab-pane" type="button" role="tab" aria-controls="taskgroups-tab-pane" aria-selected="false">任务组</button>
+            </li>
+        </ul>
+        
+        <div class="tab-content" id="myTabContent">
+            <!-- 单个任务面板 -->
+            <div class="tab-pane fade show active" id="tasks-tab-pane" role="tabpanel" aria-labelledby="tasks-tab" tabindex="0">
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createTaskModal">
+                                <i class="fas fa-plus"></i> 新建任务
+                            </button>
+                            <div>
+                                <button class="btn btn-secondary" id="refreshBtn">
+                                    <i class="fas fa-sync-alt"></i> 刷新列表
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header bg-light">
+                        <h5 class="mb-0">任务列表</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover table-striped mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>任务名称</th>
+                                        <th>任务函数</th>
+                                        <th>状态</th>
+                                        <th>上次运行</th>
+                                        <th>下次运行</th>
+                                        <th>运行次数</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="taskList">
+                                    <!-- 任务数据将通过JavaScript动态加载 -->
+                                    <tr>
+                                        <td colspan="7" class="text-center">加载中...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
-        </div>
-        
-        <div class="card">
-            <div class="card-header bg-light">
-                <h5 class="mb-0">任务列表</h5>
-            </div>
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-hover table-striped mb-0">
-                        <thead class="table-light">
-                            <tr>
-                                <th>任务名称</th>
-                                <th>任务函数</th>
-                                <th>状态</th>
-                                <th>上次运行</th>
-                                <th>下次运行</th>
-                                <th>运行次数</th>
-                                <th>操作</th>
-                            </tr>
-                        </thead>
-                        <tbody id="taskList">
-                            <!-- 任务数据将通过JavaScript动态加载 -->
-                            <tr>
-                                <td colspan="7" class="text-center">加载中...</td>
-                            </tr>
-                        </tbody>
-                    </table>
+            
+            <!-- 任务组面板 -->
+            <div class="tab-pane fade" id="taskgroups-tab-pane" role="tabpanel" aria-labelledby="taskgroups-tab" tabindex="0">
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createTaskGroupModal">
+                                <i class="fas fa-plus"></i> 新建任务组
+                            </button>
+                            <div>
+                                <button class="btn btn-secondary" id="refreshTaskGroupsBtn">
+                                    <i class="fas fa-sync-alt"></i> 刷新列表
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header bg-light">
+                        <h5 class="mb-0">任务组列表</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover table-striped mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>任务组名称</th>
+                                        <th>包含任务数</th>
+                                        <th>状态</th>
+                                        <th>上次运行</th>
+                                        <th>下次运行</th>
+                                        <th>运行次数</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="taskGroupList">
+                                    <!-- 任务组数据将通过JavaScript动态加载 -->
+                                    <tr>
+                                        <td colspan="7" class="text-center">加载中...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -91,6 +157,165 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
                     <button type="button" class="btn btn-primary" id="createTaskBtn">创建</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新建任务组模态框 -->
+    <div class="modal fade" id="createTaskGroupModal" tabindex="-1" aria-labelledby="createTaskGroupModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="createTaskGroupModalLabel">新建任务组</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="createTaskGroupForm">
+                        <div class="mb-3">
+                            <label for="taskGroupName" class="form-label">任务组名称</label>
+                            <input type="text" class="form-control" id="taskGroupName" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">选择任务（任务将按照以下顺序执行）</label>
+                            <div class="card">
+                                <div class="card-body">
+                                    <p>请在创建任务组后添加任务</p>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="createTaskGroupBtn">创建</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 任务组详情模态框 -->
+    <div class="modal fade" id="taskGroupDetailModal" tabindex="-1" aria-labelledby="taskGroupDetailModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="taskGroupDetailModalLabel">任务组详情</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="taskGroupDetailContent">
+                        <!-- 任务组基本信息 -->
+                    </div>
+                    
+                    <hr>
+                    
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5>任务列表</h5>
+                            <button class="btn btn-sm btn-primary" id="addTaskToGroupBtn">
+                                <i class="fas fa-plus"></i> 添加任务
+                            </button>
+                        </div>
+                        <div class="table-responsive mt-2">
+                            <table class="table table-sm table-bordered">
+                                <thead>
+                                    <tr>
+                                        <th>执行顺序</th>
+                                        <th>任务名称</th>
+                                        <th>任务函数</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="taskGroupTasksList">
+                                    <!-- 任务组中的任务列表 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <div id="taskSelectionSection" style="display: none;">
+                        <hr>
+                        <h5>选择要添加的任务</h5>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>任务名称</th>
+                                        <th>任务函数</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="availableTasksList">
+                                    <!-- 可用的任务列表 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 启动任务组模态框 -->
+    <div class="modal fade" id="startTaskGroupModal" tabindex="-1" aria-labelledby="startTaskGroupModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="startTaskGroupModalLabel">启动任务组</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="startTaskGroupForm">
+                        <div class="mb-3">
+                            <label class="form-label">调度类型</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="groupSchedulerType" id="groupIntervalType" value="interval" checked>
+                                <label class="form-check-label" for="groupIntervalType">
+                                    间隔执行
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="groupSchedulerType" id="groupCronType" value="cron">
+                                <label class="form-check-label" for="groupCronType">
+                                    Cron表达式
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div id="groupIntervalSection">
+                            <div class="mb-3">
+                                <label for="groupInterval" class="form-label">执行间隔（秒）</label>
+                                <input type="number" class="form-control" id="groupInterval" min="1" value="3600">
+                            </div>
+                        </div>
+                        
+                        <div id="groupCronSection" style="display: none;">
+                            <div class="mb-3">
+                                <label for="groupCronExpression" class="form-label">Cron 表达式</label>
+                                <input type="text" class="form-control" id="groupCronExpression" placeholder="0 * * * *">
+                                <small class="form-text text-muted">格式: 分 时 日 月 周，例如：0 * * * * 表示每小时整点执行</small>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="groupStartTime" class="form-label">开始时间（可选）</label>
+                            <input type="datetime-local" class="form-control" id="groupStartTime">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="groupEndTime" class="form-label">结束时间（可选）</label>
+                            <input type="datetime-local" class="form-control" id="groupEndTime">
+                        </div>
+                        
+                        <input type="hidden" id="startTaskGroupId">
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="startTaskGroupBtn">启动</button>
                 </div>
             </div>
         </div>
@@ -145,9 +370,14 @@
                                 </select>
                             </div>
                         </div>
-                        <button class="btn btn-primary" id="refreshLogsBtn">
-                            <i class="fas fa-sync-alt"></i> 刷新日志
-                        </button>
+                        <div>
+                            <button class="btn btn-danger me-2" id="clearLogsBtn">
+                                <i class="fas fa-trash-alt"></i> 清除日志
+                            </button>
+                            <button class="btn btn-primary" id="refreshLogsBtn">
+                                <i class="fas fa-sync-alt"></i> 刷新日志
+                            </button>
+                        </div>
                     </div>
                     <div class="log-container">
                         <table class="table table-sm table-striped log-table">

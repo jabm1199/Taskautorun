@@ -10,6 +10,114 @@ from datetime import datetime, timedelta
 
 task_manager = TaskManager()
 
+# 任务组API相关类
+class TaskGroupListAPI(Resource):
+    def __init__(self):
+        self.parser = reqparse.RequestParser()
+        self.parser.add_argument('name', type=str, required=True, 
+                                help='任务组名称不能为空')
+        self.parser.add_argument('task_ids', type=list, default=[],
+                                help='任务ID列表')
+        super(TaskGroupListAPI, self).__init__()
+    
+    def get(self):
+        """获取所有任务组列表"""
+        return task_manager.get_all_task_groups()
+    
+    def post(self):
+        """创建新任务组"""
+        args = self.parser.parse_args()
+        app.logger.info(f"正在创建新任务组：{args['name']}")
+        return task_manager.create_task_group(args['name'], args['task_ids'])
+
+class TaskGroupAPI(Resource):
+    def __init__(self):
+        self.parser = reqparse.RequestParser()
+        self.parser.add_argument('name', type=str, 
+                                help='任务组名称')
+        self.parser.add_argument('task_ids', type=list, 
+                                help='任务ID列表')
+        super(TaskGroupAPI, self).__init__()
+    
+    def get(self, group_id):
+        """获取任务组详情"""
+        return task_manager.get_task_group(group_id)
+    
+    def put(self, group_id):
+        """更新任务组"""
+        args = self.parser.parse_args()
+        app.logger.info(f"正在更新任务组 {group_id}")
+        return task_manager.update_task_group(group_id, args)
+    
+    def delete(self, group_id):
+        """删除任务组"""
+        app.logger.info(f"正在删除任务组 {group_id}")
+        return task_manager.delete_task_group(group_id)
+
+class TaskGroupTaskAPI(Resource):
+    def __init__(self):
+        self.parser = reqparse.RequestParser()
+        self.parser.add_argument('task_id', type=str, required=True,
+                                help='任务ID不能为空')
+        super(TaskGroupTaskAPI, self).__init__()
+    
+    def post(self, group_id):
+        """添加任务到任务组"""
+        args = self.parser.parse_args()
+        app.logger.info(f"正在向任务组 {group_id} 添加任务 {args['task_id']}")
+        return task_manager.add_task_to_group(group_id, args['task_id'])
+    
+    def delete(self, group_id):
+        """从任务组中移除任务"""
+        args = self.parser.parse_args()
+        app.logger.info(f"正在从任务组 {group_id} 移除任务 {args['task_id']}")
+        return task_manager.remove_task_from_group(group_id, args['task_id'])
+
+class TaskGroupReorderAPI(Resource):
+    def __init__(self):
+        self.parser = reqparse.RequestParser()
+        self.parser.add_argument('task_ids', type=list, required=True,
+                                help='任务ID列表不能为空')
+        super(TaskGroupReorderAPI, self).__init__()
+    
+    def post(self, group_id):
+        """重新排序任务组中的任务"""
+        args = self.parser.parse_args()
+        app.logger.info(f"正在重新排序任务组 {group_id} 中的任务")
+        return task_manager.reorder_tasks_in_group(group_id, args['task_ids'])
+
+class TaskGroupStartAPI(Resource):
+    def __init__(self):
+        self.parser = reqparse.RequestParser()
+        self.parser.add_argument('start_time', type=str, 
+                                help='开始时间 (ISO 格式 YYYY-MM-DD HH:MM:SS)')
+        self.parser.add_argument('end_time', type=str, 
+                                help='结束时间 (ISO 格式 YYYY-MM-DD HH:MM:SS)')
+        self.parser.add_argument('interval', type=int, 
+                                help='运行间隔（秒）')
+        self.parser.add_argument('cron', type=str, 
+                                help='Cron表达式 (例如: "*/5 * * * *")')
+        super(TaskGroupStartAPI, self).__init__()
+    
+    def post(self, group_id):
+        """启动任务组"""
+        args = self.parser.parse_args()
+        app.logger.info(f"正在启动任务组 {group_id}")
+        return task_manager.start_task_group(group_id, args)
+
+class TaskGroupStopAPI(Resource):
+    def post(self, group_id):
+        """停止任务组"""
+        app.logger.info(f"正在停止任务组 {group_id}")
+        return task_manager.stop_task_group(group_id)
+
+class TaskGroupExecuteAPI(Resource):
+    def post(self, group_id):
+        """立即执行任务组"""
+        app.logger.info(f"正在立即执行任务组 {group_id}")
+        return task_manager.execute_task_group_now(group_id)
+
+# 原有的任务相关类
 class TaskListAPI(Resource):
     def __init__(self):
         self.parser = reqparse.RequestParser()
@@ -123,7 +231,7 @@ class TaskLogsAPI(Resource):
         """获取任务执行日志
         
         参数:
-            task_id: 任务ID，如果不提供则获取所有日志
+            task_id: 任务ID或任务组ID，如果不提供则获取所有日志
             lines: 获取的日志行数，默认100
             days: 获取最近几天的日志，默认1
         """
@@ -156,24 +264,45 @@ class TaskLogsAPI(Resource):
             cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
             logs = [log for log in logs if log.startswith(cutoff_date) or log.split(' ')[0] >= cutoff_date]
         
-        # 根据任务ID过滤
+        # 备份原始日志，以便多次过滤
+        logs_backup = logs.copy()
+        
+        # 根据ID过滤（先尝试作为任务ID查询）
         if task_id:
+            # 先尝试作为任务ID处理
             task = task_manager.get_task(task_id)
+            
+            # 如果不是任务ID，尝试作为任务组ID处理
             if isinstance(task, tuple) and task[1] == 404:
-                return {'logs': [], 'error': '任务不存在'}, 404
+                task_group = task_manager.get_task_group(task_id)
                 
-            task_name = task['name']
-            task_pattern = f"ID: {task_id}"
-            
-            # 备份原始日志，以便在第一次过滤失败时使用
-            logs_backup = logs.copy()
-            logs = [log for log in logs if task_pattern in log]
-            
-            # 如果没有找到日志，尝试使用任务名称作为备选过滤方式
-            if not logs:
-                app.logger.info(f"没有找到包含ID: {task_id}的日志，尝试使用任务名称过滤")
-                task_name_pattern = f"{task_name}"
-                logs = [log for log in logs_backup if task_name_pattern in log]
+                # 如果也不是任务组ID，返回错误
+                if isinstance(task_group, tuple) and task_group[1] == 404:
+                    return {'logs': [], 'error': '任务或任务组不存在'}, 404
+                
+                # 处理任务组日志
+                task_name = task_group['name']
+                task_pattern = f"ID: {task_id}"
+                group_pattern = f"任务组: {task_name}"
+                
+                logs = [log for log in logs if task_pattern in log or group_pattern in log]
+                
+                # 如果没有找到日志，尝试使用任务组名称作为备选过滤方式
+                if not logs:
+                    app.logger.info(f"没有找到包含ID: {task_id}的日志，尝试使用任务组名称过滤")
+                    logs = [log for log in logs_backup if task_name in log]
+            else:
+                # 处理普通任务日志
+                task_name = task['name']
+                task_pattern = f"ID: {task_id}"
+                
+                logs = [log for log in logs if task_pattern in log]
+                
+                # 如果没有找到日志，尝试使用任务名称作为备选过滤方式
+                if not logs:
+                    app.logger.info(f"没有找到包含ID: {task_id}的日志，尝试使用任务名称过滤")
+                    task_name_pattern = f"{task_name}"
+                    logs = [log for log in logs_backup if task_name_pattern in log]
         
         # 限制返回行数
         logs = logs[-lines:] if lines > 0 else logs
@@ -243,14 +372,137 @@ class TaskLogsAPI(Resource):
                 })
         
         return {'logs': formatted_logs}
+    
+    def delete(self, task_id=None):
+        """清除日志
+        
+        参数:
+            task_id: 任务ID或任务组ID，如果不提供则清除所有日志
+            days: 清除最近几天的日志，默认清除全部
+        """
+        days = request.args.get('days', default=0, type=int)
+        
+        log_file = 'logs/tasks.log'
+        if not os.path.exists(log_file):
+            return {'status': 'error', 'message': '日志文件不存在'}, 404
+        
+        try:
+            # 首先备份日志文件
+            backup_file = f'logs/tasks_backup_{datetime.now().strftime("%Y%m%d%H%M%S")}.log'
+            import shutil
+            shutil.copy2(log_file, backup_file)
+            
+            # 如果指定了任务ID，只清除相关日志
+            if task_id:
+                # 读取所有日志
+                with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    logs = f.readlines()
+                
+                # 根据天数过滤要保留的日志
+                if days > 0:
+                    cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+                    older_logs = [log for log in logs if log.split(' ')[0] < cutoff_date]
+                else:
+                    older_logs = []
+                
+                # 先尝试作为任务ID处理
+                task = task_manager.get_task(task_id)
+                
+                # 决定过滤条件
+                if isinstance(task, tuple) and task[1] == 404:
+                    # 尝试作为任务组ID处理
+                    task_group = task_manager.get_task_group(task_id)
+                    
+                    if isinstance(task_group, tuple) and task_group[1] == 404:
+                        return {'status': 'error', 'message': '任务或任务组不存在'}, 404
+                    
+                    # 任务组的过滤条件
+                    task_name = task_group['name']
+                    task_pattern = f"ID: {task_id}"
+                    group_pattern = f"任务组: {task_name}"
+                    
+                    # 保留不包含该任务组的日志
+                    if days > 0:
+                        logs_to_keep = older_logs + [
+                            log for log in logs 
+                            if (log.split(' ')[0] >= cutoff_date) and 
+                               (task_pattern not in log and group_pattern not in log and task_name not in log)
+                        ]
+                    else:
+                        logs_to_keep = [
+                            log for log in logs 
+                            if (task_pattern not in log and group_pattern not in log and task_name not in log)
+                        ]
+                else:
+                    # 任务的过滤条件
+                    task_name = task['name']
+                    task_pattern = f"ID: {task_id}"
+                    
+                    # 保留不包含该任务的日志
+                    if days > 0:
+                        logs_to_keep = older_logs + [
+                            log for log in logs 
+                            if (log.split(' ')[0] >= cutoff_date) and 
+                               (task_pattern not in log and task_name not in log)
+                        ]
+                    else:
+                        logs_to_keep = [
+                            log for log in logs 
+                            if (task_pattern not in log and task_name not in log)
+                        ]
+                
+                # 写入保留的日志
+                with open(log_file, 'w', encoding='utf-8') as f:
+                    f.writelines(logs_to_keep)
+                
+                # 记录操作日志
+                operation_info = f"任务ID: {task_id}" if not isinstance(task, tuple) else f"任务组ID: {task_id}"
+                days_info = f"最近{days}天" if days > 0 else "所有"
+                app.logger.info(f"已清除{operation_info}的{days_info}日志")
+                
+                return {'status': 'success', 'message': f'已清除指定日志，备份至 {backup_file}'}
+            else:
+                # 清除所有日志或保留一部分
+                if days > 0:
+                    # 只保留早于指定天数的日志
+                    with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                        logs = f.readlines()
+                    
+                    cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+                    logs_to_keep = [log for log in logs if log.split(' ')[0] < cutoff_date]
+                    
+                    with open(log_file, 'w', encoding='utf-8') as f:
+                        f.writelines(logs_to_keep)
+                else:
+                    # 清空所有日志
+                    open(log_file, 'w').close()
+                
+                days_info = f"最近{days}天" if days > 0 else "所有"
+                app.logger.info(f"已清除{days_info}全局日志")
+                
+                return {'status': 'success', 'message': f'已清除{days_info}日志，备份至 {backup_file}'}
+        
+        except Exception as e:
+            app.logger.error(f"清除日志失败: {e}")
+            return {'status': 'error', 'message': f'清除日志失败: {str(e)}'}, 500
 
 def register_routes(api, scheduler):
     task_manager.set_scheduler(scheduler)
     
+    # 任务相关路由
     api.add_resource(TaskListAPI, '/api/tasks')
     api.add_resource(TaskAPI, '/api/tasks/<string:task_id>')
     api.add_resource(TaskStartAPI, '/api/tasks/<string:task_id>/start')
     api.add_resource(TaskStopAPI, '/api/tasks/<string:task_id>/stop')
     api.add_resource(TaskExecuteAPI, '/api/tasks/<string:task_id>/execute')
     api.add_resource(TaskFunctionsAPI, '/api/functions')
-    api.add_resource(TaskLogsAPI, '/api/logs', '/api/logs/<string:task_id>') 
+    api.add_resource(TaskLogsAPI, '/api/logs', '/api/logs/<string:task_id>')
+    
+    # 任务组相关路由
+    api.add_resource(TaskGroupListAPI, '/api/task-groups')
+    api.add_resource(TaskGroupAPI, '/api/task-groups/<string:group_id>')
+    api.add_resource(TaskGroupTaskAPI, '/api/task-groups/<string:group_id>/tasks')
+    api.add_resource(TaskGroupReorderAPI, '/api/task-groups/<string:group_id>/reorder')
+    api.add_resource(TaskGroupStartAPI, '/api/task-groups/<string:group_id>/start')
+    api.add_resource(TaskGroupStopAPI, '/api/task-groups/<string:group_id>/stop')
+    api.add_resource(TaskGroupExecuteAPI, '/api/task-groups/<string:group_id>/execute') 
