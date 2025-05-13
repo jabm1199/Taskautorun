@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>自动化定时任务管理系统</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container mt-4">
+        <h1 class="text-center mb-4">自动化定时任务管理系统</h1>
+        
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createTaskModal">
+                        <i class="fas fa-plus"></i> 新建任务
+                    </button>
+                    <button class="btn btn-secondary" id="refreshBtn">
+                        <i class="fas fa-sync-alt"></i> 刷新列表
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header bg-light">
+                <h5 class="mb-0">任务列表</h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover table-striped mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>任务名称</th>
+                                <th>任务函数</th>
+                                <th>状态</th>
+                                <th>上次运行</th>
+                                <th>下次运行</th>
+                                <th>运行次数</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="taskList">
+                            <!-- 任务数据将通过JavaScript动态加载 -->
+                            <tr>
+                                <td colspan="7" class="text-center">加载中...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新建任务模态框 -->
+    <div class="modal fade" id="createTaskModal" tabindex="-1" aria-labelledby="createTaskModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="createTaskModalLabel">新建任务</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="createTaskForm">
+                        <div class="mb-3">
+                            <label for="taskName" class="form-label">任务名称</label>
+                            <input type="text" class="form-control" id="taskName" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="taskFunction" class="form-label">任务函数</label>
+                            <select class="form-select" id="taskFunction" required>
+                                <option value="">请选择函数</option>
+                                <!-- 任务函数将通过JavaScript动态加载 -->
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="taskArgs" class="form-label">函数参数 (JSON格式)</label>
+                            <textarea class="form-control" id="taskArgs" rows="3" placeholder='{"参数名": "参数值"}'></textarea>
+                            <small class="form-text text-muted">例如: {"name": "张三"} 或 {"min_val": 1, "max_val": 100}</small>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="createTaskBtn">创建</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 任务详情模态框 -->
+    <div class="modal fade" id="taskDetailModal" tabindex="-1" aria-labelledby="taskDetailModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="taskDetailModalLabel">任务详情</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="taskDetailContent">
+                        <!-- 任务详情将通过JavaScript动态加载 -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 启动任务模态框 -->
+    <div class="modal fade" id="startTaskModal" tabindex="-1" aria-labelledby="startTaskModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="startTaskModalLabel">启动任务</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="startTaskForm">
+                        <div class="mb-3">
+                            <label class="form-label">调度类型</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="schedulerType" id="intervalType" value="interval" checked>
+                                <label class="form-check-label" for="intervalType">
+                                    间隔执行
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="schedulerType" id="cronType" value="cron">
+                                <label class="form-check-label" for="cronType">
+                                    Cron表达式
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div id="intervalSection">
+                            <div class="mb-3">
+                                <label for="interval" class="form-label">执行间隔（秒）</label>
+                                <input type="number" class="form-control" id="interval" min="1" value="60">
+                            </div>
+                        </div>
+                        
+                        <div id="cronSection" style="display: none;">
+                            <div class="mb-3">
+                                <label for="cronExpression" class="form-label">Cron 表达式</label>
+                                <input type="text" class="form-control" id="cronExpression" placeholder="*/5 * * * *">
+                                <small class="form-text text-muted">格式: 分 时 日 月 周，例如：*/5 * * * * 表示每5分钟执行一次</small>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="startTime" class="form-label">开始时间（可选）</label>
+                            <input type="datetime-local" class="form-control" id="startTime">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="endTime" class="form-label">结束时间（可选）</label>
+                            <input type="datetime-local" class="form-control" id="endTime">
+                        </div>
+                        
+                        <input type="hidden" id="startTaskId">
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="startTaskBtn">启动</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html> 
