@@ -79,4 +79,51 @@ pre.json {
     border: 1px solid #dee2e6;
     max-height: 200px;
     overflow-y: auto;
+}
+
+/* 日志相关样式 */
+.log-container {
+    max-height: 600px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 0.25rem;
+}
+
+.log-table {
+    margin-bottom: 0;
+}
+
+.log-level {
+    font-weight: 500;
+    padding: 0.15rem 0.4rem;
+    border-radius: 0.25rem;
+    display: inline-block;
+    text-align: center;
+    min-width: 60px;
+}
+
+.log-level-INFO {
+    background-color: #e3f2fd;
+    color: #0d6efd;
+}
+
+.log-level-WARNING {
+    background-color: #fff3cd;
+    color: #ffc107;
+}
+
+.log-level-ERROR {
+    background-color: #f8d7da;
+    color: #dc3545;
+}
+
+.log-level-DEBUG {
+    background-color: #d1e7dd;
+    color: #198754;
+}
+
+.log-message {
+    font-family: Consolas, Monaco, 'Andale Mono', monospace;
+    white-space: pre-wrap;
+    word-break: break-all;
 } 

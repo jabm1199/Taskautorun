@@ -8,6 +8,7 @@ from apscheduler.triggers.date import DateTrigger
 import importlib
 import inspect
 import os
+from logging.handlers import RotatingFileHandler
 
 logger = logging.getLogger(__name__)
 
@@ -19,17 +20,21 @@ class TaskManager:
     
     def _setup_task_logger(self):
         """设置专用于任务的日志记录器"""
+        # 获取已经在app.py中配置好的任务日志记录器
         task_logger = logging.getLogger('task_logger')
-        task_logger.setLevel(logging.INFO)
         
-        # 确保logs目录存在
-        os.makedirs('logs', exist_ok=True)
-        
-        # 创建日志处理器
-        handler = logging.FileHandler('logs/tasks.log')
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        task_logger.addHandler(handler)
+        # 如果没有处理器（可能是独立测试时），则添加一个
+        if not task_logger.handlers:
+            # 确保logs目录存在
+            os.makedirs('logs', exist_ok=True)
+            
+            # 创建日志处理器，明确指定UTF-8编码
+            handler = RotatingFileHandler('logs/tasks.log', maxBytes=1024*1024, 
+                                        backupCount=3, encoding='utf-8')
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+            handler.setFormatter(formatter)
+            task_logger.addHandler(handler)
+            task_logger.setLevel(logging.INFO)
         
         return task_logger
     

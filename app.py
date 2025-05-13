@@ -16,16 +16,25 @@ os.makedirs('templates', exist_ok=True)
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
-handler = RotatingFileHandler('logs/app.log', maxBytes=10000, backupCount=3)
-handler.setFormatter(logging.Formatter(
+
+# 应用日志
+app_handler = RotatingFileHandler('logs/app.log', maxBytes=10000, backupCount=3, encoding='utf-8')
+app_handler.setFormatter(logging.Formatter(
     '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
 ))
-handler.setLevel(logging.INFO)
+app_handler.setLevel(logging.INFO)
+
+# 任务日志
+task_logger = logging.getLogger('task_logger')
+task_logger.setLevel(logging.INFO)
+task_handler = RotatingFileHandler('logs/tasks.log', maxBytes=10000, backupCount=3, encoding='utf-8')
+task_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+task_logger.addHandler(task_handler)
 
 # 创建应用
 app = Flask(__name__)
 api = Api(app)
-app.logger.addHandler(handler)
+app.logger.addHandler(app_handler)
 
 # 初始化调度器
 scheduler = BackgroundScheduler(

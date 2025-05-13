@@ -18,9 +18,14 @@
                     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createTaskModal">
                         <i class="fas fa-plus"></i> 新建任务
                     </button>
-                    <button class="btn btn-secondary" id="refreshBtn">
-                        <i class="fas fa-sync-alt"></i> 刷新列表
-                    </button>
+                    <div>
+                        <button class="btn btn-info me-2" onclick="viewAllLogs()">
+                            <i class="fas fa-list-alt"></i> 查看全局日志
+                        </button>
+                        <button class="btn btn-secondary" id="refreshBtn">
+                            <i class="fas fa-sync-alt"></i> 刷新列表
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -102,6 +107,63 @@
                 <div class="modal-body">
                     <div id="taskDetailContent">
                         <!-- 任务详情将通过JavaScript动态加载 -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 任务日志模态框 -->
+    <div class="modal fade" id="taskLogsModal" tabindex="-1" aria-labelledby="taskLogsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="taskLogsModalLabel">任务日志</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3 d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="input-group" style="width: 300px;">
+                                <span class="input-group-text">最近</span>
+                                <select class="form-select" id="logDays">
+                                    <option value="1">1天</option>
+                                    <option value="3">3天</option>
+                                    <option value="7">7天</option>
+                                    <option value="30">30天</option>
+                                    <option value="0">全部</option>
+                                </select>
+                                <span class="input-group-text">最多</span>
+                                <select class="form-select" id="logLines">
+                                    <option value="100">100行</option>
+                                    <option value="500">500行</option>
+                                    <option value="1000">1000行</option>
+                                    <option value="0">全部</option>
+                                </select>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary" id="refreshLogsBtn">
+                            <i class="fas fa-sync-alt"></i> 刷新日志
+                        </button>
+                    </div>
+                    <div class="log-container">
+                        <table class="table table-sm table-striped log-table">
+                            <thead>
+                                <tr>
+                                    <th width="180">时间</th>
+                                    <th width="80">级别</th>
+                                    <th>消息</th>
+                                </tr>
+                            </thead>
+                            <tbody id="logsList">
+                                <tr>
+                                    <td colspan="3" class="text-center">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
                 <div class="modal-footer">

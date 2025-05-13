@@ -1,6 +1,10 @@
 // API基础URL
 const API_BASE_URL = '/api';
 
+// 当前任务ID和名称（用于日志查看）
+let currentTaskId = null;
+let currentTaskName = null;
+
 // DOM元素加载完成后执行
 document.addEventListener('DOMContentLoaded', function() {
     // 初始化加载任务列表
@@ -17,6 +21,13 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 启动任务按钮点击事件
     document.getElementById('startTaskBtn').addEventListener('click', startTask);
+    
+    // 刷新日志按钮点击事件
+    document.getElementById('refreshLogsBtn').addEventListener('click', refreshLogs);
+    
+    // 日志参数变化事件
+    document.getElementById('logDays').addEventListener('change', refreshLogs);
+    document.getElementById('logLines').addEventListener('change', refreshLogs);
     
     // 切换调度类型事件
     document.querySelectorAll('input[name="schedulerType"]').forEach(radio => {
@@ -125,6 +136,9 @@ function loadTasks() {
                         <div class="action-group">
                             <button class="btn btn-sm btn-info btn-action" onclick="viewTaskDetail('${task.id}')">
                                 <i class="fas fa-info-circle"></i> 详情
+                            </button>
+                            <button class="btn btn-sm btn-secondary btn-action" onclick="viewTaskLogs('${task.id}', '${escapeHtml(task.name)}')">
+                                <i class="fas fa-list-alt"></i> 日志
                             </button>
                             ${task.status !== 'running' ? 
                             `<button class="btn btn-sm btn-success btn-action" onclick="openStartTaskModal('${task.id}')">
@@ -261,6 +275,126 @@ function viewTaskDetail(taskId) {
             console.error('Error viewing task details:', error);
             showError('加载任务详情失败');
         });
+}
+
+// 查看任务日志
+function viewTaskLogs(taskId, taskName) {
+    // 保存当前任务信息
+    currentTaskId = taskId;
+    currentTaskName = taskName;
+    
+    // 设置模态框标题
+    document.getElementById('taskLogsModalLabel').textContent = `任务日志: ${taskName}`;
+    
+    // 显示模态框
+    const modal = new bootstrap.Modal(document.getElementById('taskLogsModal'));
+    modal.show();
+    
+    // 加载日志
+    loadTaskLogs();
+}
+
+// 查看所有日志
+function viewAllLogs() {
+    // 清除当前任务信息
+    currentTaskId = null;
+    currentTaskName = null;
+    
+    // 设置模态框标题
+    document.getElementById('taskLogsModalLabel').textContent = '全局任务日志';
+    
+    // 显示模态框
+    const modal = new bootstrap.Modal(document.getElementById('taskLogsModal'));
+    modal.show();
+    
+    // 加载日志
+    loadTaskLogs();
+}
+
+// 刷新日志
+function refreshLogs() {
+    loadTaskLogs();
+}
+
+// 加载任务日志
+function loadTaskLogs() {
+    const days = document.getElementById('logDays').value;
+    const lines = document.getElementById('logLines').value;
+    
+    let url = `${API_BASE_URL}/logs`;
+    if (currentTaskId) {
+        url += `/${currentTaskId}`;
+    }
+    url += `?days=${days}&lines=${lines}`;
+    
+    // 显示加载中
+    document.getElementById('logsList').innerHTML = '<tr><td colspan="3" class="text-center">加载中...</td></tr>';
+    
+    fetch(url)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP错误 ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            const logsList = document.getElementById('logsList');
+            
+            if (data.error) {
+                logsList.innerHTML = `<tr><td colspan="3" class="text-center text-danger">错误: ${escapeHtml(data.error)}</td></tr>`;
+                return;
+            }
+            
+            if (!data.logs || data.logs.length === 0) {
+                logsList.innerHTML = '<tr><td colspan="3" class="text-center">暂无日志数据</td></tr>';
+                return;
+            }
+            
+            let html = '';
+            data.logs.forEach(log => {
+                html += `
+                <tr>
+                    <td>${log.timestamp}</td>
+                    <td><span class="log-level log-level-${log.level}">${log.level}</span></td>
+                    <td class="log-message">${escapeHtml(log.message)}</td>
+                </tr>
+                `;
+            });
+            
+            logsList.innerHTML = html;
+            
+            // 滚动到底部
+            const logContainer = document.querySelector('.log-container');
+            logContainer.scrollTop = logContainer.scrollHeight;
+        })
+        .catch(error => {
+            console.error('Error loading logs:', error);
+            const errorMessage = error.message || '未知错误';
+            const diagnosticMessage = getLogDiagnosticMessage(errorMessage);
+            
+            document.getElementById('logsList').innerHTML = `
+                <tr><td colspan="3" class="text-center text-danger">加载日志失败: ${escapeHtml(errorMessage)}</td></tr>
+                <tr><td colspan="3" class="text-center">${diagnosticMessage}</td></tr>
+            `;
+        });
+}
+
+// 获取日志错误的诊断信息
+function getLogDiagnosticMessage(errorMessage) {
+    if (errorMessage.includes('UnicodeDecodeError') || errorMessage.includes('invalid')) {
+        return `
+            <div class="alert alert-info mt-2">
+                <h5>可能的编码问题</h5>
+                <p>系统检测到日志文件可能存在编码问题。这通常发生在：</p>
+                <ul>
+                    <li>日志文件包含非UTF-8编码的中文字符</li>
+                    <li>日志文件由不同编码格式的程序写入</li>
+                </ul>
+                <p>系统已尝试自动修复此问题。请尝试重新启动应用或刷新页面。如果问题持续存在，请联系管理员检查日志文件编码。</p>
+            </div>
+        `;
+    }
+    return '';
 }
 
 // 创建新任务
