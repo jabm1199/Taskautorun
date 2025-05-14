@@ -1,11 +1,11 @@
 // API基础URL
 const API_BASE_URL = '/api';
 
-// 当前任务ID和名称（用于日志查看）
+// 全局变量，用于跟踪当前选中的任务ID和名称
 let currentTaskId = null;
 let currentTaskName = null;
 
-// 当前任务组ID和名称（用于任务组详情）
+// 全局变量，用于跟踪当前选中的任务组ID和名称
 let currentTaskGroupId = null;
 let currentTaskGroupName = null;
 
@@ -369,7 +369,7 @@ function loadTasksInGroup(taskIds) {
                 html += `
                 <tr>
                     <td>${index + 1}</td>
-                    <td>${escapeHtml(task.name)}</td>
+                    <td>${escapeHtml(task.name)}<br><small class="text-muted">ID: ${task.id}</small></td>
                     <td>${escapeHtml(task.function)}</td>
                     <td>
                         <button class="btn btn-sm btn-danger" onclick="removeTaskFromGroup('${task.id}')">
@@ -422,7 +422,7 @@ function loadAvailableTasks() {
                     availableTasks.forEach(task => {
                         html += `
                         <tr>
-                            <td>${escapeHtml(task.name)}</td>
+                            <td>${escapeHtml(task.name)}<br><small class="text-muted">ID: ${task.id}</small></td>
                             <td>${escapeHtml(task.function)}</td>
                             <td>
                                 <button class="btn btn-sm btn-success" onclick="addTaskToGroup('${task.id}')">
@@ -974,7 +974,7 @@ function loadTasks() {
             data.tasks.forEach(task => {
                 html += `
                 <tr>
-                    <td>${escapeHtml(task.name)}</td>
+                    <td>${escapeHtml(task.name)}<br><small class="text-muted">ID: ${task.id}</small></td>
                     <td>${escapeHtml(task.function)}</td>
                     <td><span class="task-status status-${task.status}">${getStatusText(task.status)}</span></td>
                     <td>${formatDateTime(task.last_run)}</td>
@@ -1017,6 +1017,7 @@ function loadTasks() {
 }
 
 // 查看任务详情
+// 查看任务详情
 function viewTaskDetail(taskId) {
     fetch(`${API_BASE_URL}/tasks/${taskId}`)
         .then(response => response.json())
@@ -1027,44 +1028,8 @@ function viewTaskDetail(taskId) {
                 return;
             }
             
-            // 格式化参数显示
-            let argsHtml = '';
-            
-            // 特殊处理HTTP请求任务
-            if (task.function === 'http_request') {
-                const args = task.args;
-                argsHtml = `
-                <div class="card mt-2">
-                    <div class="card-header">
-                        <strong>${args.method || 'GET'} ${escapeHtml(args.url || '')}</strong>
-                    </div>
-                    <div class="card-body">
-                        <h6>请求头:</h6>
-                        <pre class="bg-light p-2 rounded">${escapeHtml(JSON.stringify(args.headers || {}, null, 2))}</pre>
-                        
-                        ${(args.method !== 'GET' && args.method !== 'HEAD' && args.method !== 'OPTIONS' && args.body) ? `
-                        <h6>请求体:</h6>
-                        <pre class="bg-light p-2 rounded">${escapeHtml(typeof args.body === 'object' ? JSON.stringify(args.body, null, 2) : args.body)}</pre>
-                        ` : ''}
-                        
-                        <div class="row mt-2">
-                            <div class="col-md-6">
-                                <small class="text-muted">超时: ${args.timeout || 30} 秒</small>
-                            </div>
-                            <div class="col-md-6">
-                                <small class="text-muted">验证SSL: ${args.verify === false ? '否' : '是'}</small>
-                            </div>
-                        </div>
-                    </div>
-                </div>`;
-            } else {
-                // 普通任务参数
-                try {
-                    argsHtml = `<pre class="bg-light p-2 rounded">${escapeHtml(JSON.stringify(task.args, null, 2))}</pre>`;
-                } catch (e) {
-                    argsHtml = `<pre class="bg-light p-2 rounded">${escapeHtml(JSON.stringify({}, null, 2))}</pre>`;
-                }
-            }
+            // 保存当前任务ID，用于编辑功能
+            currentTaskId = task.id;
             
             // 构建详情HTML
             let html = `
@@ -1103,11 +1068,21 @@ function viewTaskDetail(taskId) {
                 </tr>
                 <tr>
                     <th>函数参数</th>
-                    <td>${argsHtml}</td>
+                    <td><pre class="bg-light p-2 rounded">${escapeHtml(JSON.stringify(task.args, null, 2))}</pre></td>
                 </tr>
             </table>
+            `;
             
-            <div class="mt-3 d-flex gap-2">
+            document.getElementById('taskDetailContent').innerHTML = html;
+            
+            // 添加任务操作按钮
+            let actionsHtml = `
+                <button class="btn btn-info" onclick="editTask()">
+                    <i class="fas fa-edit"></i> 编辑任务
+                </button>
+                <button class="btn btn-secondary" onclick="viewTaskLogs('${task.id}', '${escapeHtml(task.name)}')">
+                    <i class="fas fa-list-alt"></i> 查看日志
+                </button>
                 ${task.status !== 'running' ? 
                 `<button class="btn btn-success" onclick="openStartTaskModal('${task.id}')">
                     <i class="fas fa-play"></i> 启动任务
@@ -1120,23 +1095,450 @@ function viewTaskDetail(taskId) {
                 `<button class="btn btn-warning" onclick="stopTask('${task.id}')">
                     <i class="fas fa-stop"></i> 停止任务
                 </button>` : ''}
-                
-                <button class="btn btn-secondary" onclick="viewTaskLogs('${task.id}', '${escapeHtml(task.name)}')">
-                    <i class="fas fa-list-alt"></i> 查看日志
-                </button>
-            </div>
             `;
             
-            document.getElementById('taskDetailContent').innerHTML = html;
+            document.getElementById('taskDetailActions').innerHTML = actionsHtml;
+            
+            // 隐藏编辑表单
+            document.getElementById('taskEditForm').style.display = 'none';
+            document.getElementById('taskDetailContent').style.display = 'block';
+            document.getElementById('taskDetailActions').style.display = 'flex';
             
             // 显示详情模态框
             const modal = new bootstrap.Modal(document.getElementById('taskDetailModal'));
             modal.show();
+
+            // 监听模态框关闭事件
+            document.getElementById('taskDetailModal').addEventListener('hidden.bs.modal', function () {
+                // 重置状态
+                currentTaskId = null;
+                document.getElementById('taskDetailContent').innerHTML = '';
+                document.getElementById('taskDetailActions').innerHTML = '';
+            });
         })
         .catch(error => {
             console.error('Error viewing task details:', error);
             showError('加载任务详情失败');
         });
+}
+
+// 编辑任务
+function editTask() {
+    const taskId = currentTaskId;
+    
+    fetch(`${API_BASE_URL}/tasks/${taskId}`)
+        .then(response => response.json())
+        .then(task => {
+            // 检查是否有错误
+            if (task.error) {
+                showError(task.error);
+                return;
+            }
+            
+            // 隐藏详情区域，显示编辑表单
+            document.getElementById('taskDetailContent').style.display = 'none';
+            document.getElementById('taskDetailActions').style.display = 'none';
+            document.getElementById('taskEditForm').style.display = 'block';
+            
+            // 填充表单
+            document.getElementById('editTaskId').value = task.id;
+            document.getElementById('editTaskName').value = task.name;
+            
+            // 加载函数列表并设置选择
+            loadFunctionsForEdit();
+            
+            // 在函数列表加载完成后处理
+            const functionSelect = document.getElementById('editTaskFunction');
+            functionSelect.addEventListener('load', function() {
+                // 选择对应的函数
+                for (let i = 0; i < functionSelect.options.length; i++) {
+                    if (functionSelect.options[i].value === task.function) {
+                        functionSelect.selectedIndex = i;
+                        break;
+                    }
+                }
+                
+                // 根据任务类型显示对应表单并填充数据
+                if (task.function === 'http_request') {
+                    // 显示HTTP请求表单
+                    document.getElementById('editNormalArgsSection').style.display = 'none';
+                    document.getElementById('editHttpRequestForm').style.display = 'block';
+                    
+                    // 填充HTTP请求表单数据
+                    if (task.args) {
+                        document.getElementById('editHttpUrl').value = task.args.url || '';
+                        document.getElementById('editHttpMethod').value = task.args.method || 'GET';
+                        document.getElementById('editHttpHeaders').value = JSON.stringify(task.args.headers || {}, null, 2);
+                        
+                        if (task.args.body) {
+                            document.getElementById('editHttpBody').value = typeof task.args.body === 'object' 
+                                ? JSON.stringify(task.args.body, null, 2) 
+                                : task.args.body;
+                        } else {
+                            document.getElementById('editHttpBody').value = '';
+                        }
+                        
+                        document.getElementById('editHttpTimeout').value = task.args.timeout || 30;
+                        document.getElementById('editHttpVerify').checked = task.args.verify !== false;
+                    }
+                    
+                    // 更新请求体显示
+                    updateEditBodyVisibility();
+                } else {
+                    // 显示普通参数表单
+                    document.getElementById('editNormalArgsSection').style.display = 'block';
+                    document.getElementById('editHttpRequestForm').style.display = 'none';
+                    
+                    // 填充任务参数
+                    if (task.args) {
+                        document.getElementById('editTaskArgs').value = JSON.stringify(task.args, null, 2);
+                    } else {
+                        document.getElementById('editTaskArgs').value = '{}';
+                    }
+                }
+            }, { once: true });
+            
+            // 设置取消按钮点击事件
+            document.getElementById('cancelEditBtn').onclick = function() {
+                document.getElementById('taskEditForm').style.display = 'none';
+                document.getElementById('taskDetailContent').style.display = 'block';
+                document.getElementById('taskDetailActions').style.display = 'flex';
+            };
+            
+            // 设置保存按钮点击事件
+            document.getElementById('saveTaskBtn').onclick = function() {
+                saveTaskChanges();
+            };
+        })
+        .catch(error => {
+            console.error('Error loading task for edit:', error);
+            showError('加载任务信息失败');
+        });
+}
+
+// 加载函数列表到编辑表单
+function loadFunctionsForEdit() {
+    fetch(`${API_BASE_URL}/functions`)
+        .then(response => response.json())
+        .then(data => {
+            const functionSelect = document.getElementById('editTaskFunction');
+            
+            // 清空现有选项
+            while (functionSelect.options.length > 0) {
+                functionSelect.remove(0);
+            }
+            
+            // 添加默认选项
+            const defaultOption = document.createElement('option');
+            defaultOption.value = '';
+            defaultOption.textContent = '请选择函数';
+            functionSelect.appendChild(defaultOption);
+            
+            // 添加函数选项
+            data.functions.forEach(func => {
+                const option = document.createElement('option');
+                option.value = func.name;
+                
+                // 提取简短描述（第一行）
+                const shortDesc = func.description.split('\n')[0];
+                option.textContent = `${func.name} - ${shortDesc}`;
+                
+                // 添加函数参数信息作为自定义属性
+                option.setAttribute('data-description', func.description);
+                option.setAttribute('data-parameters', JSON.stringify(func.parameters));
+                
+                functionSelect.appendChild(option);
+            });
+            
+            // 设置函数选择事件监听
+            functionSelect.addEventListener('change', function() {
+                const selectedOption = this.options[this.selectedIndex];
+                if (selectedOption.value) {
+                    const parametersAttr = selectedOption.getAttribute('data-parameters');
+                    
+                    // 隐藏HTTP请求表单和普通参数输入区域
+                    document.getElementById('editHttpRequestForm').style.display = 'none';
+                    document.getElementById('editNormalArgsSection').style.display = 'block';
+                    
+                    // 特殊处理HTTP请求函数
+                    if (selectedOption.value === 'http_request') {
+                        document.getElementById('editHttpRequestForm').style.display = 'block';
+                        document.getElementById('editNormalArgsSection').style.display = 'none';
+                        
+                        // 设置默认值
+                        document.getElementById('editHttpUrl').value = '';
+                        document.getElementById('editHttpMethod').value = 'GET';
+                        document.getElementById('editHttpHeaders').value = '{}';
+                        document.getElementById('editHttpBody').value = '';
+                        document.getElementById('editHttpTimeout').value = '30';
+                        document.getElementById('editHttpVerify').checked = true;
+                        
+                        // 根据请求方法更新表单显示
+                        updateEditBodyVisibility();
+                        return;
+                    }
+                    
+                    // 为普通函数生成参数示例
+                    if (parametersAttr) {
+                        try {
+                            const parameters = JSON.parse(parametersAttr);
+                            if (parameters.length > 0) {
+                                const exampleArgs = {};
+                                parameters.forEach(param => {
+                                    if ('default' in param) {
+                                        exampleArgs[param.name] = param.default;
+                                    } else {
+                                        // 为没有默认值的参数提供示例值
+                                        exampleArgs[param.name] = null;
+                                    }
+                                });
+                                
+                                // 如果有参数，设置到文本域
+                                if (Object.keys(exampleArgs).length > 0) {
+                                    document.getElementById('editTaskArgs').value = JSON.stringify(exampleArgs, null, 2);
+                                } else {
+                                    document.getElementById('editTaskArgs').value = '{}';
+                                }
+                            } else {
+                                document.getElementById('editTaskArgs').value = '{}';
+                            }
+                        } catch (e) {
+                            console.error('解析函数参数失败', e);
+                            document.getElementById('editTaskArgs').value = '{}';
+                        }
+                    } else {
+                        document.getElementById('editTaskArgs').value = '{}';
+                    }
+                }
+            });
+            
+            // 触发加载完成事件
+            functionSelect.dispatchEvent(new Event('load'));
+        })
+        .catch(error => {
+            console.error('Error loading functions for edit:', error);
+            showError('加载任务函数列表失败');
+        });
+}
+
+// 处理函数变更，显示对应的表单
+function handleEditFunctionChange(task = null) {
+    const functionName = document.getElementById('editTaskFunction').value;
+    const normalArgsSection = document.getElementById('editNormalArgsSection');
+    const httpRequestForm = document.getElementById('editHttpRequestForm');
+    
+    // 根据选择的函数显示不同的表单
+    if (functionName === 'http_request') {
+        normalArgsSection.style.display = 'none';
+        httpRequestForm.style.display = 'block';
+        
+        // 如果有任务数据，填充HTTP请求表单
+        if (task && task.args) {
+            document.getElementById('editHttpUrl').value = task.args.url || '';
+            document.getElementById('editHttpMethod').value = task.args.method || 'GET';
+            document.getElementById('editHttpHeaders').value = JSON.stringify(task.args.headers || {}, null, 2);
+            
+            if (task.args.body) {
+                document.getElementById('editHttpBody').value = typeof task.args.body === 'object' 
+                    ? JSON.stringify(task.args.body, null, 2) 
+                    : task.args.body;
+            } else {
+                document.getElementById('editHttpBody').value = '';
+            }
+            
+            document.getElementById('editHttpTimeout').value = task.args.timeout || 30;
+            document.getElementById('editHttpVerify').checked = task.args.verify !== false;
+        } else {
+            // 如果没有任务数据，设置默认值
+            document.getElementById('editHttpUrl').value = '';
+            document.getElementById('editHttpMethod').value = 'GET';
+            document.getElementById('editHttpHeaders').value = '{}';
+            document.getElementById('editHttpBody').value = '';
+            document.getElementById('editHttpTimeout').value = '30';
+            document.getElementById('editHttpVerify').checked = true;
+            updateEditBodyVisibility();
+        }
+    } else {
+        normalArgsSection.style.display = 'block';
+        httpRequestForm.style.display = 'none';
+        
+        // 如果有任务数据，填充普通参数
+        if (task && task.args) {
+            document.getElementById('editTaskArgs').value = JSON.stringify(task.args, null, 2);
+        } else {
+            // 生成示例参数
+            generateExampleParams(functionName);
+        }
+    }
+}
+
+// 生成并显示函数的示例参数
+function generateExampleParams(functionName) {
+    // 如果没有选择函数，使用空对象
+    if (!functionName) {
+        document.getElementById('editTaskArgs').value = '{}';
+        return;
+    }
+    
+    // 查找选中的函数选项
+    const functionSelect = document.getElementById('editTaskFunction');
+    const selectedOption = Array.from(functionSelect.options).find(option => option.value === functionName);
+    
+    if (selectedOption) {
+        const parametersAttr = selectedOption.getAttribute('data-parameters');
+        
+        if (parametersAttr) {
+            try {
+                const parameters = JSON.parse(parametersAttr);
+                if (parameters.length > 0) {
+                    const exampleArgs = {};
+                    parameters.forEach(param => {
+                        if ('default' in param) {
+                            exampleArgs[param.name] = param.default;
+                        } else {
+                            // 为没有默认值的参数提供示例值
+                            exampleArgs[param.name] = null;
+                        }
+                    });
+                    
+                    // 设置示例参数到文本域
+                    document.getElementById('editTaskArgs').value = JSON.stringify(exampleArgs, null, 2);
+                    return;
+                }
+            } catch (e) {
+                console.error('解析函数参数失败', e);
+            }
+        }
+    }
+    
+    // 如果没有找到参数或发生错误，使用空对象
+    document.getElementById('editTaskArgs').value = '{}';
+}
+
+// 更新编辑表单中HTTP请求体的显示状态
+function updateEditBodyVisibility() {
+    const method = document.getElementById('editHttpMethod').value;
+    const bodyContainer = document.getElementById('editHttpBodyContainer');
+    
+    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+        bodyContainer.style.display = 'none';
+    } else {
+        bodyContainer.style.display = 'block';
+    }
+}
+
+// 保存任务修改
+function saveTaskChanges() {
+    const taskId = document.getElementById('editTaskId').value;
+    const name = document.getElementById('editTaskName').value.trim();
+    const functionName = document.getElementById('editTaskFunction').value;
+    let args = {};
+    
+    // 验证输入
+    if (!name) {
+        showError('请输入任务名称');
+        return;
+    }
+    
+    if (!functionName) {
+        showError('请选择任务函数');
+        return;
+    }
+    
+    // 根据选择的函数获取不同的参数
+    if (functionName === 'http_request') {
+        const url = document.getElementById('editHttpUrl').value.trim();
+        const method = document.getElementById('editHttpMethod').value;
+        let headers = document.getElementById('editHttpHeaders').value.trim();
+        let body = document.getElementById('editHttpBody').value.trim();
+        const timeout = parseInt(document.getElementById('editHttpTimeout').value) || 30;
+        const verify = document.getElementById('editHttpVerify').checked;
+        
+        // 验证URL
+        if (!url) {
+            showError('请输入请求URL');
+            return;
+        }
+        
+        // 解析headers
+        try {
+            headers = headers ? JSON.parse(headers) : {};
+        } catch (e) {
+            showError('请求头格式不正确，请使用有效的JSON格式');
+            return;
+        }
+        
+        // 解析body（仅对POST、PUT等方法）
+        if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && body) {
+            try {
+                // 尝试解析为JSON，失败则保留为字符串
+                if (body.trim().startsWith('{') || body.trim().startsWith('[')) {
+                    body = JSON.parse(body);
+                }
+            } catch (e) {
+                // 如果解析失败，保留为字符串
+                console.log('Body is not a valid JSON, keeping as string');
+            }
+        }
+        
+        // 构建HTTP请求参数
+        args = {
+            url: url,
+            method: method,
+            headers: headers,
+            timeout: timeout,
+            verify: verify
+        };
+        
+        // 仅当有请求体且不是GET/HEAD/OPTIONS方法时添加body
+        if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && body) {
+            args.body = body;
+        }
+    } else {
+        // 普通参数
+        try {
+            args = JSON.parse(document.getElementById('editTaskArgs').value);
+        } catch (e) {
+            showError('函数参数格式不正确，请使用有效的JSON格式');
+            return;
+        }
+    }
+    
+    // 构建请求数据
+    const taskData = {
+        name: name,
+        function: functionName,
+        args: args
+    };
+    
+    // 发送API请求
+    fetch(`${API_BASE_URL}/tasks/${taskId}`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(taskData)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showError(data.error);
+            return;
+        }
+        
+        // 显示成功消息
+        showSuccess('任务更新成功');
+        
+        // 刷新任务详情
+        viewTaskDetail(taskId);
+        
+        // 刷新任务列表
+        loadTasks();
+    })
+    .catch(error => {
+        console.error('Error updating task:', error);
+        showError('更新任务失败');
+    });
 }
 
 // 查看任务日志

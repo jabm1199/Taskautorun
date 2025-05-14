@@ -10,6 +10,7 @@ import inspect
 import os
 import requests
 from logging.handlers import RotatingFileHandler
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -114,10 +115,11 @@ class TaskGroup:
         self.current_task_index = 0  # 当前执行到的任务索引
         self.scheduler = scheduler
         self.task_manager = task_manager
+        self.context = {}  # 存储任务执行上下文，用于任务间参数传递
     
     def to_dict(self):
         """转换为字典表示"""
-        return {
+        result = {
             'id': self.id,
             'name': self.name,
             'task_ids': self.task_ids,
@@ -129,6 +131,30 @@ class TaskGroup:
             'run_count': self.run_count,
             'current_task_index': self.current_task_index
         }
+        
+        # 添加上下文信息，但过滤掉可能的大对象
+        if self.context:
+            filtered_context = {}
+            for key, value in self.context.items():
+                if key.endswith('_json') and isinstance(value, dict):
+                    # 对于JSON对象，只返回键名
+                    filtered_context[key] = f"JSON对象，包含{len(value)}个字段: {', '.join(value.keys())}"
+                elif key.endswith('_content') and isinstance(value, str) and len(value) > 100:
+                    # 对于长文本内容，只返回前100个字符
+                    filtered_context[key] = value[:100] + "..."
+                elif key.endswith('_result') and isinstance(value, dict):
+                    # 对于HTTP结果对象，只返回状态码和头信息
+                    if 'status_code' in value:
+                        filtered_context[key] = f"HTTP响应，状态码: {value.get('status_code')}"
+                    else:
+                        filtered_context[key] = f"结果对象，包含{len(value)}个字段"
+                else:
+                    # 其他类型的值，直接包含
+                    filtered_context[key] = str(value)
+            
+            result['context'] = filtered_context
+            
+        return result
     
     def add_task(self, task_id):
         """添加任务到任务组"""
@@ -148,6 +174,22 @@ class TaskGroup:
         if all(task_id in self.task_ids for task_id in task_ids) and len(task_ids) == len(self.task_ids):
             self.task_ids = task_ids
         return self.to_dict()
+        
+    def set_context_value(self, key, value):
+        """设置上下文中的值"""
+        self.context[key] = value
+        
+    def get_context_value(self, key, default=None):
+        """获取上下文中的值"""
+        return self.context.get(key, default)
+        
+    def clear_context(self):
+        """清空上下文"""
+        self.context = {}
+    
+    def get_context(self):
+        """获取执行上下文"""
+        return self.context
 
 class TaskManager:
     def __init__(self):
@@ -341,14 +383,16 @@ class TaskManager:
             task_group.last_run = datetime.datetime.now().isoformat()
             task_group.run_count += 1
             task_group.current_task_index = 0
-            task_group.status = 'running'
             
-            self.task_logger.info(f"开始执行定时任务组: {task_group.name} (ID: {group_id}), 包含 {len(task_group.task_ids)} 个任务")
+            # 清空上下文，准备开始新的执行
+            task_group.clear_context()
             
-            # 执行第一个任务
-            self._execute_next_task_in_group(task_group)
-            
-            return True
+            try:
+                self.task_logger.info(f"开始定时执行任务组: {task_group.name} (ID: {group_id})")
+                self._execute_next_task_in_group(task_group)
+            except Exception as e:
+                self.task_logger.error(f"任务组执行出错: {task_group.name} (ID: {group_id}), 错误: {str(e)}")
+                task_group.status = 'error'
         
         # 添加任务组到调度器
         job = self.scheduler.add_job(
@@ -383,10 +427,12 @@ class TaskManager:
         """执行任务组中的下一个任务
         
         当一个任务执行完成后，会调用此方法执行下一个任务
+        可以从上一个任务的结果中提取参数传递给下一个任务
         """
         # 检查是否所有任务都已执行完毕
         if task_group.current_task_index >= len(task_group.task_ids):
             task_group.status = 'completed'
+            task_group.clear_context()  # 执行完成后清空上下文
             self.task_logger.info(f"任务组执行完成: {task_group.name} (ID: {task_group.id})")
             return
         
@@ -413,15 +459,39 @@ class TaskManager:
             task['last_run'] = datetime.datetime.now().isoformat()
             task['run_count'] += 1
             
+            # 准备任务参数，处理参数传递
+            processed_args = self._process_task_args(task, task_group)
+            
             # 执行任务
             # 如果是HTTP请求函数，传递任务ID
             if task['function'] == 'http_request':
                 # 复制参数并添加task_id
-                args = task['args'].copy()
+                args = processed_args.copy()
                 args['task_id'] = task_id
                 result = func(**args)
             else:
-                result = func(**task['args'])
+                result = func(**processed_args)
+            
+            # 将结果存储到任务组上下文中，供后续任务使用
+            task_group.set_context_value('last_result', result)
+            task_group.set_context_value(f'task_{task_id}_result', result)
+            
+            # 如果是HTTP请求任务，存储更多详细信息
+            if task['function'] == 'http_request':
+                # 尝试解析JSON响应
+                try:
+                    if isinstance(result, dict) and 'content' in result:
+                        content = result['content']
+                        try:
+                            json_content = json.loads(content)
+                            task_group.set_context_value('last_json', json_content)
+                            task_group.set_context_value(f'task_{task_id}_json', json_content)
+                        except:
+                            # 如果不是JSON，存储原始内容
+                            task_group.set_context_value('last_content', content)
+                            task_group.set_context_value(f'task_{task_id}_content', content)
+                except:
+                    self.task_logger.warning(f"无法从HTTP请求结果中提取响应内容: {str(result)[:100]}")
             
             # 优化HTTP请求任务结果的记录
             if task['function'] == 'http_request':
@@ -443,6 +513,381 @@ class TaskManager:
             error_msg = f"任务组 {task_group.name} (ID: {task_group.id}) 中的任务执行失败: {task['name']} (ID: {task_id}), 错误: {str(e)}"
             self.task_logger.error(error_msg)
             task_group.status = 'error'
+    
+    def _process_task_args(self, task, task_group):
+        """处理任务参数，支持从上下文中获取值
+        
+        参数:
+            task: 任务对象
+            task_group: 任务组对象
+            
+        返回:
+            处理后的任务参数
+        """
+        import re
+        import json
+        
+        # 复制原始参数
+        args = task['args'].copy() if task['args'] else {}
+        
+        # 如果是HTTP请求任务，特殊处理headers和body
+        if task['function'] == 'http_request':
+            # 处理整个参数对象
+            self._process_http_args(args, task_group)
+            return args
+            
+        # 对其他类型任务的每个参数进行处理
+        for key, value in list(args.items()):
+            args[key] = self._process_arg_value(value, task_group)
+        
+        # 记录参数处理结果
+        if task['args'] != args:
+            self.task_logger.info(f"任务参数已处理，原参数: {task['args']}，处理后: {args}")
+            
+        return args
+        
+    def _process_http_args(self, args, task_group):
+        """处理HTTP请求的特殊参数
+        
+        参数:
+            args: HTTP请求参数字典
+            task_group: 任务组对象
+        """
+        # 处理URL参数
+        if 'url' in args and isinstance(args['url'], str):
+            args['url'] = self._process_arg_value(args['url'], task_group)
+            
+        # 处理请求头
+        if 'headers' in args:
+            # 如果headers是字符串且包含引用，先处理整个字符串
+            if isinstance(args['headers'], str):
+                processed_headers = self._process_arg_value(args['headers'], task_group)
+                # 如果返回值是字符串，尝试解析为JSON
+                if isinstance(processed_headers, str):
+                    try:
+                        args['headers'] = json.loads(processed_headers)
+                    except:
+                        args['headers'] = {}
+                else:
+                    args['headers'] = processed_headers
+            # 如果headers是字典，逐个处理每个键值对
+            elif isinstance(args['headers'], dict):
+                for header_key, header_value in list(args['headers'].items()):
+                    args['headers'][header_key] = self._process_arg_value(header_value, task_group)
+        
+        # 处理请求体
+        if 'body' in args:
+            # 特殊处理body参数
+            body = args['body']
+            # 如果body是字符串且包含引用，先处理整个字符串
+            if isinstance(body, str):
+                processed_body = self._process_arg_value(body, task_group)
+                # 如果返回值是字符串且看起来像JSON，尝试解析为JSON对象
+                if isinstance(processed_body, str) and processed_body.strip().startswith('{'):
+                    try:
+                        args['body'] = json.loads(processed_body)
+                    except:
+                        args['body'] = processed_body
+                else:
+                    args['body'] = processed_body
+            # 如果body是字典，递归处理所有键值对
+            elif isinstance(body, dict):
+                args['body'] = self._process_dict_recursively(body, task_group)
+    
+    def _process_dict_recursively(self, d, task_group):
+        """递归处理字典中的所有值
+        
+        参数:
+            d: 要处理的字典
+            task_group: 任务组对象
+            
+        返回:
+            处理后的字典
+        """
+        result = {}
+        for k, v in d.items():
+            if isinstance(v, dict):
+                result[k] = self._process_dict_recursively(v, task_group)
+            elif isinstance(v, list):
+                result[k] = [
+                    self._process_dict_recursively(item, task_group) if isinstance(item, dict)
+                    else self._process_arg_value(item, task_group) 
+                    for item in v
+                ]
+            else:
+                result[k] = self._process_arg_value(v, task_group)
+        return result
+        
+    def _process_arg_value(self, value, task_group):
+        """处理单个参数值，支持更多灵活的上下文引用
+        
+        支持的引用格式:
+        - ${context:key} - 引用上下文值
+        - ${context:json.field1.field2} - 引用嵌套JSON字段
+        - ${context:last_result.status_code} - 引用HTTP响应状态码
+        - ${http.response_body:last} - 引用上一次HTTP请求的响应体
+        - ${http.response_json:last.key1.key2} - 引用上一次HTTP响应JSON中的嵌套字段
+        - ${http.headers:last.Content-Type} - 引用上一次HTTP响应头中的字段
+        
+        参数:
+            value: 参数值
+            task_group: 任务组对象
+            
+        返回:
+            处理后的参数值
+        """
+        import re
+        
+        # 如果不是字符串，直接返回
+        if not isinstance(value, str):
+            return value
+            
+        # 检查是否有完整的引用表达式（整个参数值就是一个引用）
+        full_context_match = re.match(r'^\${context:([\w\.-]+)}$', value)
+        if full_context_match:
+            # 这是一个完整引用，直接返回上下文值（可以是任何类型）
+            return self._extract_context_value(full_context_match.group(1), task_group)
+            
+        # 检查HTTP响应体引用
+        full_http_body_match = re.match(r'^\${http\.response_body:([\w\.-]+)}$', value)
+        if full_http_body_match:
+            context_key = full_http_body_match.group(1)
+            # 处理特殊关键字
+            if context_key == 'last':
+                # 获取上一个HTTP请求的响应内容
+                if 'last_result' in task_group.context and isinstance(task_group.context['last_result'], dict):
+                    return task_group.context['last_result'].get('content', '')
+            else:
+                # 获取指定任务的HTTP响应内容
+                task_result_key = f"task_{context_key}_result"
+                if task_result_key in task_group.context and isinstance(task_group.context[task_result_key], dict):
+                    return task_group.context[task_result_key].get('content', '')
+            return value  # 如果没有找到，返回原始值
+            
+        # 检查HTTP JSON响应引用
+        full_http_json_match = re.match(r'^\${http\.response_json:([\w\.-]+)}$', value)
+        if full_http_json_match:
+            json_path = full_http_json_match.group(1)
+            parts = json_path.split('.')
+            
+            # 确定使用哪个上下文键
+            if parts[0] == 'last':
+                json_key = 'last_json'
+                nested_path = parts[1:] if len(parts) > 1 else []
+            else:
+                # 指定任务ID
+                json_key = f"task_{parts[0]}_json"
+                nested_path = parts[1:] if len(parts) > 1 else []
+                
+            # 获取JSON对象
+            if json_key in task_group.context and isinstance(task_group.context[json_key], dict):
+                json_obj = task_group.context[json_key]
+                # 提取嵌套字段
+                try:
+                    for part in nested_path:
+                        if isinstance(json_obj, dict) and part in json_obj:
+                            json_obj = json_obj[part]
+                        else:
+                            return value  # 如果路径无效，返回原始值
+                    return json_obj  # 返回提取的值
+                except:
+                    pass
+            return value  # 如果处理失败，返回原始值
+            
+        # 检查HTTP头部引用
+        full_http_headers_match = re.match(r'^\${http\.headers:([\w\.-]+)}$', value)
+        if full_http_headers_match:
+            header_path = full_http_headers_match.group(1)
+            parts = header_path.split('.')
+            
+            # 确定使用哪个上下文键
+            if parts[0] == 'last':
+                result_key = 'last_result'
+                header_name = parts[1] if len(parts) > 1 else None
+            else:
+                # 指定任务ID
+                result_key = f"task_{parts[0]}_result"
+                header_name = parts[1] if len(parts) > 1 else None
+                
+            # 获取响应头
+            if result_key in task_group.context and isinstance(task_group.context[result_key], dict):
+                result = task_group.context[result_key]
+                headers = result.get('headers', {})
+                if header_name:
+                    # 返回特定头部的值
+                    return headers.get(header_name, value)
+                return headers  # 返回所有头部
+            return value  # 如果失败，返回原始值
+        
+        # 处理部分引用（字符串中的嵌入引用）
+        # 匹配所有形式的引用表达式
+        result = value
+        patterns = [
+            (r'\${context:([\w\.-]+)}', self._replace_context_ref),
+            (r'\${http\.response_body:([\w\.-]+)}', self._replace_http_body_ref),
+            (r'\${http\.response_json:([\w\.-]+)}', self._replace_http_json_ref),
+            (r'\${http\.headers:([\w\.-]+)}', self._replace_http_headers_ref),
+            (r'\${http\.status:([\w\.-]+)}', self._replace_http_status_ref)
+        ]
+        
+        for pattern, replacer in patterns:
+            matches = re.findall(pattern, result)
+            for match in matches:
+                placeholder = re.escape(f"${{{pattern.split(':')[0][2:]}:{match}}}")
+                replace_value = replacer(match, task_group)
+                if replace_value is not None:
+                    # 转为字符串替换
+                    result = re.sub(placeholder, str(replace_value), result)
+        
+        return result
+    
+    def _extract_context_value(self, path, task_group):
+        """从上下文中提取值
+        
+        参数:
+            path: 路径表达式，例如 "last_json.data.id"
+            task_group: 任务组对象
+            
+        返回:
+            上下文中的值
+        """
+        parts = path.split('.')
+        context_key = parts[0]
+        
+        # 获取上下文中的值
+        context_value = task_group.get_context_value(context_key)
+        if context_value is None:
+            self.task_logger.warning(f"任务组 {task_group.name} 上下文中不存在键 {context_key}")
+            return None
+            
+        # 处理嵌套引用
+        result_value = context_value
+        for part in parts[1:]:
+            if isinstance(result_value, dict) and part in result_value:
+                result_value = result_value[part]
+            else:
+                self.task_logger.warning(f"无法从对象中提取属性 {part}")
+                return None
+                
+        return result_value
+        
+    def _replace_context_ref(self, path, task_group):
+        """替换上下文引用
+        
+        参数:
+            path: 路径表达式
+            task_group: 任务组对象
+            
+        返回:
+            替换后的值
+        """
+        return self._extract_context_value(path, task_group)
+        
+    def _replace_http_body_ref(self, path, task_group):
+        """替换HTTP响应体引用
+        
+        参数:
+            path: 路径表达式
+            task_group: 任务组对象
+            
+        返回:
+            替换后的值
+        """
+        if path == 'last':
+            # 获取上一个HTTP请求的响应内容
+            if 'last_result' in task_group.context and isinstance(task_group.context['last_result'], dict):
+                return task_group.context['last_result'].get('content', '')
+        else:
+            # 获取指定任务的HTTP响应内容
+            task_result_key = f"task_{path}_result"
+            if task_result_key in task_group.context and isinstance(task_group.context[task_result_key], dict):
+                return task_group.context[task_result_key].get('content', '')
+        return None
+        
+    def _replace_http_json_ref(self, path, task_group):
+        """替换HTTP JSON响应引用
+        
+        参数:
+            path: 路径表达式
+            task_group: 任务组对象
+            
+        返回:
+            替换后的值
+        """
+        parts = path.split('.')
+        if parts[0] == 'last':
+            json_key = 'last_json'
+            nested_path = parts[1:] if len(parts) > 1 else []
+        else:
+            # 指定任务ID
+            json_key = f"task_{parts[0]}_json"
+            nested_path = parts[1:] if len(parts) > 1 else []
+            
+        # 获取JSON对象
+        if json_key in task_group.context and isinstance(task_group.context[json_key], dict):
+            json_obj = task_group.context[json_key]
+            # 提取嵌套字段
+            try:
+                for part in nested_path:
+                    if isinstance(json_obj, dict) and part in json_obj:
+                        json_obj = json_obj[part]
+                    else:
+                        return None
+                return json_obj
+            except:
+                pass
+        return None
+        
+    def _replace_http_headers_ref(self, path, task_group):
+        """替换HTTP头部引用
+        
+        参数:
+            path: 路径表达式
+            task_group: 任务组对象
+            
+        返回:
+            替换后的值
+        """
+        parts = path.split('.')
+        if parts[0] == 'last':
+            result_key = 'last_result'
+            header_name = parts[1] if len(parts) > 1 else None
+        else:
+            # 指定任务ID
+            result_key = f"task_{parts[0]}_result"
+            header_name = parts[1] if len(parts) > 1 else None
+            
+        # 获取响应头
+        if result_key in task_group.context and isinstance(task_group.context[result_key], dict):
+            result = task_group.context[result_key]
+            headers = result.get('headers', {})
+            if header_name:
+                # 返回特定头部的值
+                return headers.get(header_name, None)
+            return str(headers)  # 返回所有头部
+        return None
+        
+    def _replace_http_status_ref(self, path, task_group):
+        """替换HTTP状态码引用
+        
+        参数:
+            path: 路径表达式
+            task_group: 任务组对象
+            
+        返回:
+            替换后的值
+        """
+        if path == 'last':
+            result_key = 'last_result'
+        else:
+            # 指定任务ID
+            result_key = f"task_{path}_result"
+            
+        # 获取状态码
+        if result_key in task_group.context and isinstance(task_group.context[result_key], dict):
+            result = task_group.context[result_key]
+            return result.get('status_code', None)
+        return None
     
     def stop_task_group(self, group_id):
         """停止任务组"""
@@ -493,6 +938,9 @@ class TaskManager:
         task_group.last_run = datetime.datetime.now().isoformat()
         task_group.run_count += 1
         task_group.current_task_index = 0
+        
+        # 清空上下文，准备开始新的执行
+        task_group.clear_context()
         
         self.task_logger.info(f"开始立即执行任务组: {task_group.name} (ID: {group_id}), 包含 {len(task_group.task_ids)} 个任务")
         
@@ -578,7 +1026,7 @@ class TaskManager:
         
         # 更新任务配置
         for key, value in data.items():
-            if key in ['start_time', 'end_time', 'interval', 'cron'] and value is not None:
+            if key in ['name', 'function', 'args', 'start_time', 'end_time', 'interval', 'cron'] and value is not None:
                 task[key] = value
         
         self.task_logger.info(f"更新了任务配置: {task['name']} (ID: {task_id})")

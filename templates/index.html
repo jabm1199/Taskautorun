@@ -151,9 +151,36 @@
                         <!-- 普通参数输入区域 -->
                         <div id="normalArgsSection">
                             <div class="mb-3">
-                                <label for="taskArgs" class="form-label">函数参数 (JSON格式)</label>
-                                <textarea class="form-control" id="taskArgs" rows="3" placeholder='{"参数名": "参数值"}'></textarea>
-                                <small class="form-text text-muted">例如: {"name": "张三"} 或 {"min_val": 1, "max_val": 100}</small>
+                                <label for="taskArgs" class="form-label">函数参数（JSON格式）</label>
+                                <textarea class="form-control" id="taskArgs" rows="5">{}</textarea>
+                                <small class="form-text text-muted">输入任务函数所需的参数，JSON格式</small>
+                                <div class="mt-2 alert alert-info small">
+                                    <strong>参数传递提示：</strong>
+                                    <p>在任务组中，可以使用以下语法从前一个任务的结果中获取值：</p>
+                                    <h6>基本上下文引用</h6>
+                                    <ul>
+                                        <li><code>${context:last_result}</code> - 引用上一个任务的完整结果</li>
+                                        <li><code>${context:last_json}</code> - 引用上一个HTTP请求任务的JSON响应内容</li>
+                                        <li><code>${context:last_json.data.id}</code> - 引用JSON响应中的嵌套属性</li>
+                                        <li><code>${context:task_任务ID_json.field}</code> - 引用特定任务的JSON响应中的字段</li>
+                                    </ul>
+                                    <h6>HTTP请求专用引用（更简洁直观）</h6>
+                                    <ul>
+                                        <li><code>${http.response_body:last}</code> - 引用上一个HTTP请求的完整响应体</li>
+                                        <li><code>${http.response_json:last.data.token}</code> - 引用上一个HTTP响应JSON中的嵌套字段</li>
+                                        <li><code>${http.response_json:任务ID.data.users[0].id}</code> - 引用特定任务JSON响应中的字段</li>
+                                        <li><code>${http.headers:last.Content-Type}</code> - 引用上一个HTTP响应的特定头部</li>
+                                        <li><code>${http.headers:任务ID.Authorization}</code> - 引用特定任务响应的特定头部</li>
+                                        <li><code>${http.status:last}</code> - 获取上一个HTTP请求的状态码</li>
+                                    </ul>
+                                    <h6>示例：HTTP接口链式调用</h6>
+                                    <p>第一个HTTP任务获取令牌：<br>
+                                       <code>{"url": "https://api.example.com/auth", "method": "POST", "body": {"username": "admin", "password": "password"}}</code>
+                                    </p>
+                                    <p>第二个HTTP任务使用令牌访问资源：<br>
+                                       <code>{"url": "https://api.example.com/data", "method": "GET", "headers": {"Authorization": "Bearer ${http.response_json:last.token}"}}</code>
+                                    </p>
+                                </div>
                             </div>
                         </div>
                         
@@ -383,7 +410,92 @@
                 </div>
                 <div class="modal-body">
                     <div id="taskDetailContent">
-                        <!-- 任务详情将通过JavaScript动态加载 -->
+                        <!-- 任务详情内容将通过JavaScript动态加载 -->
+                    </div>
+                    
+                    <div class="mt-3 d-flex gap-2" id="taskDetailActions">
+                        <!-- 任务操作按钮将通过JavaScript动态加载 -->
+                    </div>
+
+                    <!-- 任务编辑表单 -->
+                    <div id="taskEditForm" style="display: none;" class="mt-3">
+                        <h5>编辑任务</h5>
+                        <form>
+                            <input type="hidden" id="editTaskId">
+                            <div class="mb-3">
+                                <label for="editTaskName" class="form-label">任务名称</label>
+                                <input type="text" class="form-control" id="editTaskName" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="editTaskFunction" class="form-label">任务函数</label>
+                                <select class="form-select" id="editTaskFunction" required>
+                                    <option value="">请选择函数</option>
+                                    <!-- 任务函数将通过JavaScript动态加载 -->
+                                </select>
+                            </div>
+                            
+                            <!-- 普通参数编辑区域 -->
+                            <div id="editNormalArgsSection">
+                                <div class="mb-3">
+                                    <label for="editTaskArgs" class="form-label">函数参数（JSON格式）</label>
+                                    <textarea class="form-control" id="editTaskArgs" rows="5">{}</textarea>
+                                    <small class="form-text text-muted">输入任务函数所需的参数，JSON格式</small>
+                                </div>
+                            </div>
+                            
+                            <!-- HTTP请求专用表单 -->
+                            <div id="editHttpRequestForm" style="display: none;">
+                                <div class="mb-3">
+                                    <label for="editHttpUrl" class="form-label">请求URL</label>
+                                    <input type="url" class="form-control" id="editHttpUrl" placeholder="https://example.com/api/data" required>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="editHttpMethod" class="form-label">请求方法</label>
+                                    <select class="form-select" id="editHttpMethod" onchange="updateEditBodyVisibility()">
+                                        <option value="GET">GET</option>
+                                        <option value="POST">POST</option>
+                                        <option value="PUT">PUT</option>
+                                        <option value="DELETE">DELETE</option>
+                                        <option value="PATCH">PATCH</option>
+                                        <option value="HEAD">HEAD</option>
+                                        <option value="OPTIONS">OPTIONS</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="editHttpHeaders" class="form-label">请求头 (JSON格式)</label>
+                                    <textarea class="form-control" id="editHttpHeaders" rows="2" placeholder='{"Content-Type": "application/json"}'>{}</textarea>
+                                    <small class="form-text text-muted">例如: {"Authorization": "Bearer token123"}</small>
+                                </div>
+                                
+                                <div class="mb-3" id="editHttpBodyContainer">
+                                    <label for="editHttpBody" class="form-label">请求体</label>
+                                    <textarea class="form-control" id="editHttpBody" rows="3" placeholder='{"key": "value"}'></textarea>
+                                    <small class="form-text text-muted">可以是JSON对象或普通文本</small>
+                                </div>
+                                
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="editHttpTimeout" class="form-label">超时时间 (秒)</label>
+                                            <input type="number" class="form-control" id="editHttpTimeout" value="30" min="1" max="300">
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="mb-3 form-check mt-4">
+                                            <input type="checkbox" class="form-check-input" id="editHttpVerify" checked>
+                                            <label class="form-check-label" for="editHttpVerify">验证SSL证书</label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-primary" id="saveTaskBtn">保存修改</button>
+                                <button type="button" class="btn btn-secondary" id="cancelEditBtn">取消</button>
+                            </div>
+                        </form>
                     </div>
                 </div>
                 <div class="modal-footer">

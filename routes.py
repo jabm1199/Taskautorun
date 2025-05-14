@@ -142,6 +142,12 @@ class TaskListAPI(Resource):
 class TaskAPI(Resource):
     def __init__(self):
         self.parser = reqparse.RequestParser()
+        self.parser.add_argument('name', type=str, 
+                                help='任务名称')
+        self.parser.add_argument('function', type=str, 
+                                help='要执行的函数名')
+        self.parser.add_argument('args', type=dict, 
+                                help='函数参数')
         self.parser.add_argument('start_time', type=str, 
                                 help='开始时间')
         self.parser.add_argument('end_time', type=str, 
