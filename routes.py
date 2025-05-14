@@ -223,6 +223,22 @@ class TaskFunctionsAPI(Resource):
                 'parameters': params
             })
         
+        # 添加http_request函数
+        http_params = [
+            {'name': 'url', 'description': '请求URL'},
+            {'name': 'method', 'default': 'GET', 'description': '请求方法（GET, POST, PUT, DELETE等）'},
+            {'name': 'headers', 'default': {}, 'description': '请求头（字典）'},
+            {'name': 'body', 'default': None, 'description': '请求体（字典或字符串）'},
+            {'name': 'timeout', 'default': 30, 'description': '超时时间（秒）'},
+            {'name': 'verify', 'default': True, 'description': '是否验证SSL证书'}
+        ]
+        
+        functions.append({
+            'name': 'http_request',
+            'description': '执行HTTP请求\n\n可用于调用外部API、爬取网页数据或与其他系统集成',
+            'parameters': http_params
+        })
+        
         app.logger.info(f"获取可用的任务函数列表，共{len(functions)}个")
         return {'functions': functions}
 
@@ -235,6 +251,9 @@ class TaskLogsAPI(Resource):
             lines: 获取的日志行数，默认100
             days: 获取最近几天的日志，默认1
         """
+        # 确保能访问re模块
+        import re as regex
+        
         lines = request.args.get('lines', default=100, type=int)
         days = request.args.get('days', default=1, type=int)
         
@@ -281,28 +300,93 @@ class TaskLogsAPI(Resource):
                     return {'logs': [], 'error': '任务或任务组不存在'}, 404
                 
                 # 处理任务组日志
-                task_name = task_group['name']
-                task_pattern = f"ID: {task_id}"
-                group_pattern = f"任务组: {task_name}"
+                task_group_obj = task_manager.task_groups.get(task_id)
+                if not task_group_obj:
+                    return {'logs': [], 'error': '任务组不存在'}, 404
                 
-                logs = [log for log in logs if task_pattern in log or group_pattern in log]
+                # 获取任务组包含的所有任务ID
+                task_ids = task_group_obj.task_ids
                 
-                # 如果没有找到日志，尝试使用任务组名称作为备选过滤方式
-                if not logs:
-                    app.logger.info(f"没有找到包含ID: {task_id}的日志，尝试使用任务组名称过滤")
-                    logs = [log for log in logs_backup if task_name in log]
+                # 任务组自身的日志模式
+                task_group_pattern = f"(ID: {task_id}|任务组: {task_group_obj.name})"
+                
+                # 收集任务组日志和所有任务的日志
+                group_logs = []
+                
+                # 1. 收集任务组自身相关的日志
+                for log in logs:
+                    if regex.search(task_group_pattern, log):
+                        group_logs.append(log)
+                
+                # 2. 收集任务组中所有任务的日志
+                for task_id_in_group in task_ids:
+                    task_in_group = task_manager.tasks.get(task_id_in_group)
+                    if not task_in_group:
+                        continue
+                    
+                    task_name = task_in_group['name']
+                    task_pattern = f"ID: {task_id_in_group}"
+                    task_id_pattern = f"任务ID: {task_id_in_group}"
+                    
+                    # 找出与该任务相关的所有日志，包括HTTP请求日志
+                    is_capture = False
+                    i = 0
+                    while i < len(logs):
+                        log = logs[i]
+                        
+                        # 如果日志行包含任务ID，开始收集
+                        if regex.search(task_pattern, log) or regex.search(task_id_pattern, log):
+                            group_logs.append(log)
+                            
+                            # 对HTTP请求任务特殊处理，启动捕获模式
+                            if "开始执行HTTP请求" in log or ("执行任务" in log and "http_request" in log):
+                                is_capture = True
+                        
+                        # 捕获模式下收集所有HTTP请求相关日志
+                        elif is_capture:
+                            # 收集当前行
+                            group_logs.append(log)
+                            
+                            # 检查是否是HTTP请求结束
+                            if "HTTP请求完成" in log or "HTTP请求发生错误" in log or "HTTP请求任务执行完成" in log:
+                                is_capture = False
+                        
+                        i += 1
+                
+                # 排序日志（按时间戳）
+                group_logs = sorted(group_logs, key=lambda x: x.split(' - ')[0] if ' - ' in x else x)
+                
+                logs = group_logs
             else:
                 # 处理普通任务日志
                 task_name = task['name']
                 task_pattern = f"ID: {task_id}"
+                task_id_pattern = f"任务ID: {task_id}"
                 
-                logs = [log for log in logs if task_pattern in log]
+                # 收集与任务相关的所有日志，包括HTTP请求日志
+                filtered_logs = []
+                is_capture = False
                 
-                # 如果没有找到日志，尝试使用任务名称作为备选过滤方式
-                if not logs:
-                    app.logger.info(f"没有找到包含ID: {task_id}的日志，尝试使用任务名称过滤")
-                    task_name_pattern = f"{task_name}"
-                    logs = [log for log in logs_backup if task_name_pattern in log]
+                for i, log in enumerate(logs):
+                    # 如果日志行包含任务ID，开始收集
+                    if regex.search(task_pattern, log) or regex.search(task_id_pattern, log):
+                        filtered_logs.append(log)
+                        
+                        # 对HTTP请求任务特殊处理，启动捕获模式
+                        if "开始执行HTTP请求" in log or ("执行任务" in log and "http_request" in log):
+                            is_capture = True
+                        continue
+                    
+                    # 捕获模式下收集所有HTTP请求相关日志
+                    if is_capture:
+                        # 收集当前行
+                        filtered_logs.append(log)
+                        
+                        # 检查是否是HTTP请求结束
+                        if "HTTP请求完成" in log or "HTTP请求发生错误" in log or "HTTP请求任务执行完成" in log:
+                            is_capture = False
+                
+                logs = filtered_logs
         
         # 限制返回行数
         logs = logs[-lines:] if lines > 0 else logs
@@ -328,8 +412,7 @@ class TaskLogsAPI(Resource):
                 else:
                     # 如果无法按预期格式分割，尝试其他常见的日志格式
                     # 例如检查是否有日期时间格式的开头
-                    import re
-                    date_match = re.match(r'^\d{4}-\d{2}-\d{2}', log_line)
+                    date_match = regex.match(r'^\d{4}-\d{2}-\d{2}', log_line)
                     if date_match:
                         # 尝试提取时间戳
                         date_end = log_line.find(' ', 10)  # 找第一个空格在日期之后
@@ -338,7 +421,7 @@ class TaskLogsAPI(Resource):
                             rest = log_line[date_end+1:].strip()
                             
                             # 尝试查找日志级别
-                            level_matches = re.search(r'\b(INFO|ERROR|WARNING|DEBUG|CRITICAL)\b', rest)
+                            level_matches = regex.search(r'\b(INFO|ERROR|WARNING|DEBUG|CRITICAL)\b', rest)
                             if level_matches:
                                 level = level_matches.group(0)
                                 message = rest.replace(level, '', 1).strip()

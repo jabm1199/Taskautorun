@@ -8,9 +8,95 @@ from apscheduler.triggers.date import DateTrigger
 import importlib
 import inspect
 import os
+import requests
 from logging.handlers import RotatingFileHandler
 
 logger = logging.getLogger(__name__)
+
+# HTTP请求函数
+def http_request(url, method='GET', headers=None, body=None, timeout=30, verify=True, task_id=None):
+    """执行HTTP请求
+    
+    Args:
+        url: 请求URL
+        method: 请求方法（GET, POST, PUT, DELETE等）
+        headers: 请求头（字典）
+        body: 请求体（字典或字符串）
+        timeout: 超时时间（秒）
+        verify: 是否验证SSL证书
+        task_id: 任务ID，用于日志记录
+        
+    Returns:
+        包含响应状态码、响应头和响应体的字典
+    """
+    logger = logging.getLogger('task_logger')
+    method = method.upper()
+    if headers is None:
+        headers = {}
+    
+    # 构建日志前缀，确保所有日志条目包含任务ID
+    task_prefix = f"[任务ID: {task_id}] " if task_id else ""
+    
+    # 记录请求开始信息
+    logger.info(f"{task_prefix}开始执行HTTP请求: {method} {url}")
+    logger.info(f"{task_prefix}请求头: {headers}")
+    
+    # 根据请求类型记录请求体（如果有）
+    if method not in ['GET', 'HEAD', 'OPTIONS'] and body is not None:
+        if isinstance(body, dict):
+            logger.info(f"{task_prefix}请求体(JSON): {body}")
+        else:
+            log_body = body[:1000] + '...' if len(str(body)) > 1000 else body
+            logger.info(f"{task_prefix}请求体: {log_body}")
+    
+    logger.info(f"{task_prefix}超时设置: {timeout}秒, SSL验证: {'启用' if verify else '禁用'}")
+    
+    try:
+        response = requests.request(
+            method=method,
+            url=url,
+            headers=headers,
+            json=body if isinstance(body, dict) else None,
+            data=body if not isinstance(body, dict) and body is not None else None,
+            timeout=timeout,
+            verify=verify
+        )
+        
+        # 记录响应信息
+        logger.info(f"{task_prefix}收到响应: 状态码 {response.status_code}")
+        logger.info(f"{task_prefix}响应头: {dict(response.headers)}")
+        
+        # 记录响应内容，但限制长度
+        try:
+            # 尝试作为JSON解析
+            response_json = response.json()
+            logger.info(f"{task_prefix}响应内容(JSON): {response_json}")
+            response_text = "已作为JSON处理，详见上方日志"
+        except:
+            # 如果不是JSON，以文本形式记录，并限制长度
+            response_text = response.text
+            if len(response_text) > 2000:
+                logger.info(f"{task_prefix}响应内容(前2000字符): {response_text[:2000]}...")
+                logger.info(f"{task_prefix}响应内容过长，已截断")
+            else:
+                logger.info(f"{task_prefix}响应内容: {response_text}")
+        
+        result = {
+            'status_code': response.status_code,
+            'headers': dict(response.headers),
+            'content': response.text,
+            'success': response.status_code < 400
+        }
+        
+        logger.info(f"{task_prefix}HTTP请求完成: {'成功' if result['success'] else '失败'}")
+        return result
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"{task_prefix}HTTP请求发生错误: {error_msg}")
+        return {
+            'error': error_msg,
+            'success': False
+        }
 
 class TaskGroup:
     """任务组类，用于管理一组按顺序执行的任务"""
@@ -328,9 +414,24 @@ class TaskManager:
             task['run_count'] += 1
             
             # 执行任务
-            result = func(**task['args'])
+            # 如果是HTTP请求函数，传递任务ID
+            if task['function'] == 'http_request':
+                # 复制参数并添加task_id
+                args = task['args'].copy()
+                args['task_id'] = task_id
+                result = func(**args)
+            else:
+                result = func(**task['args'])
             
-            self.task_logger.info(f"任务组 {task_group.name} (ID: {task_group.id}) 中的任务执行成功: {task['name']} (ID: {task_id}), 结果: {str(result)[:100]}")
+            # 优化HTTP请求任务结果的记录
+            if task['function'] == 'http_request':
+                # HTTP请求结果已经在http_request函数中记录，这里只添加一个执行成功的日志
+                status_code = result.get('status_code', 'N/A')
+                success = '成功' if result.get('success', False) else '失败'
+                self.task_logger.info(f"任务组 {task_group.name} (ID: {task_group.id}) 中的HTTP请求任务执行完成: {task['name']} (ID: {task_id}), 状态: {success}, 状态码: {status_code}")
+            else:
+                # 其他类型的任务，记录完整结果
+                self.task_logger.info(f"任务组 {task_group.name} (ID: {task_group.id}) 中的任务执行成功: {task['name']} (ID: {task_id}), 结果: {str(result)[:100]}")
             
             # 移动到下一个任务
             task_group.current_task_index += 1
@@ -493,11 +594,27 @@ class TaskManager:
         if task['status'] == 'running':
             self.stop_task(task_id)
         
+        # 从所有包含该任务的任务组中移除该任务
+        affected_groups = []
+        for group_id, task_group in self.task_groups.items():
+            if task_id in task_group.task_ids:
+                task_group.task_ids.remove(task_id)
+                affected_groups.append({
+                    'id': group_id,
+                    'name': task_group.name
+                })
+                self.task_logger.info(f"由于任务被删除，已从任务组 {task_group.name} (ID: {group_id}) 中移除任务 {task_id}")
+        
         # 从任务列表中删除
         del self.tasks[task_id]
         
         self.task_logger.info(f"删除了任务: {task['name']} (ID: {task_id})")
-        return {'status': 'deleted'}
+        
+        # 返回删除结果和受影响的任务组
+        return {
+            'status': 'deleted',
+            'affected_groups': affected_groups
+        }
     
     def start_task(self, task_id, config):
         """启动任务
@@ -531,8 +648,26 @@ class TaskManager:
             
             try:
                 self.task_logger.info(f"正在执行任务: {task['name']} (ID: {task_id})")
-                result = func(**task['args'])
-                self.task_logger.info(f"任务执行成功: {task['name']} (ID: {task_id})")
+                
+                # 如果是HTTP请求函数，传递任务ID
+                if task['function'] == 'http_request':
+                    # 复制参数并添加task_id
+                    args = task['args'].copy()
+                    args['task_id'] = task_id
+                    result = func(**args)
+                else:
+                    result = func(**task['args'])
+                
+                # 优化HTTP请求任务结果的记录
+                if task['function'] == 'http_request':
+                    # HTTP请求结果已经在http_request函数中记录，这里只添加一个执行成功的日志
+                    status_code = result.get('status_code', 'N/A')
+                    success = '成功' if result.get('success', False) else '失败'
+                    self.task_logger.info(f"HTTP请求任务执行完成: {task['name']} (ID: {task_id}), 状态: {success}, 状态码: {status_code}")
+                else:
+                    # 其他类型的任务，记录完整结果
+                    self.task_logger.info(f"任务执行成功: {task['name']} (ID: {task_id}), 结果: {result}")
+                
                 return result
             except Exception as e:
                 self.task_logger.error(f"任务执行失败: {task['name']} (ID: {task_id}), 错误: {str(e)}")
@@ -599,8 +734,26 @@ class TaskManager:
         
         try:
             self.task_logger.info(f"立即执行任务: {task['name']} (ID: {task_id})")
-            result = func(**task['args'])
-            self.task_logger.info(f"立即执行任务成功: {task['name']} (ID: {task_id})")
+            
+            # 如果是HTTP请求函数，传递任务ID
+            if task['function'] == 'http_request':
+                # 复制参数并添加task_id
+                args = task['args'].copy()
+                args['task_id'] = task_id
+                result = func(**args)
+            else:
+                result = func(**task['args'])
+            
+            # 优化HTTP请求任务结果的记录
+            if task['function'] == 'http_request':
+                # HTTP请求结果已经在http_request函数中记录，这里只添加一个执行成功的日志
+                status_code = result.get('status_code', 'N/A')
+                success = '成功' if result.get('success', False) else '失败'
+                self.task_logger.info(f"HTTP请求任务执行完成: {task['name']} (ID: {task_id}), 状态: {success}, 状态码: {status_code}")
+            else:
+                # 其他类型的任务，记录完整结果
+                self.task_logger.info(f"立即执行任务成功: {task['name']} (ID: {task_id}), 结果: {result}")
+            
             return {'status': 'executed', 'result': str(result)}
         except Exception as e:
             error_msg = f"立即执行任务失败: {task['name']} (ID: {task_id}), 错误: {str(e)}"
@@ -646,6 +799,10 @@ class TaskManager:
     
     def _get_function(self, function_name):
         """根据函数名查找并返回函数对象"""
+        # 检查是否是HTTP请求
+        if function_name == 'http_request':
+            return http_request
+            
         try:
             # 支持形如 'module.submodule.function' 的函数名
             parts = function_name.split('.')

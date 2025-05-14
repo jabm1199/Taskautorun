@@ -147,10 +147,62 @@
                                 <!-- 任务函数将通过JavaScript动态加载 -->
                             </select>
                         </div>
-                        <div class="mb-3">
-                            <label for="taskArgs" class="form-label">函数参数 (JSON格式)</label>
-                            <textarea class="form-control" id="taskArgs" rows="3" placeholder='{"参数名": "参数值"}'></textarea>
-                            <small class="form-text text-muted">例如: {"name": "张三"} 或 {"min_val": 1, "max_val": 100}</small>
+                        
+                        <!-- 普通参数输入区域 -->
+                        <div id="normalArgsSection">
+                            <div class="mb-3">
+                                <label for="taskArgs" class="form-label">函数参数 (JSON格式)</label>
+                                <textarea class="form-control" id="taskArgs" rows="3" placeholder='{"参数名": "参数值"}'></textarea>
+                                <small class="form-text text-muted">例如: {"name": "张三"} 或 {"min_val": 1, "max_val": 100}</small>
+                            </div>
+                        </div>
+                        
+                        <!-- HTTP请求专用表单 -->
+                        <div id="httpRequestForm" style="display: none;">
+                            <div class="mb-3">
+                                <label for="httpUrl" class="form-label">请求URL</label>
+                                <input type="url" class="form-control" id="httpUrl" placeholder="https://example.com/api/data" required>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="httpMethod" class="form-label">请求方法</label>
+                                <select class="form-select" id="httpMethod" onchange="updateBodyVisibility()">
+                                    <option value="GET">GET</option>
+                                    <option value="POST">POST</option>
+                                    <option value="PUT">PUT</option>
+                                    <option value="DELETE">DELETE</option>
+                                    <option value="PATCH">PATCH</option>
+                                    <option value="HEAD">HEAD</option>
+                                    <option value="OPTIONS">OPTIONS</option>
+                                </select>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="httpHeaders" class="form-label">请求头 (JSON格式)</label>
+                                <textarea class="form-control" id="httpHeaders" rows="2" placeholder='{"Content-Type": "application/json"}'>{}</textarea>
+                                <small class="form-text text-muted">例如: {"Authorization": "Bearer token123"}</small>
+                            </div>
+                            
+                            <div class="mb-3" id="httpBodyContainer">
+                                <label for="httpBody" class="form-label">请求体</label>
+                                <textarea class="form-control" id="httpBody" rows="3" placeholder='{"key": "value"}'></textarea>
+                                <small class="form-text text-muted">可以是JSON对象或普通文本</small>
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="httpTimeout" class="form-label">超时时间 (秒)</label>
+                                        <input type="number" class="form-control" id="httpTimeout" value="30" min="1" max="300">
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3 form-check mt-4">
+                                        <input type="checkbox" class="form-check-input" id="httpVerify" checked>
+                                        <label class="form-check-label" for="httpVerify">验证SSL证书</label>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </form>
                 </div>

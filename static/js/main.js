@@ -878,11 +878,34 @@ function loadFunctions() {
                 taskFunction.appendChild(option);
             });
             
-            // 添加任务函数选择事件：当选择函数时，自动生成示例参数JSON
+            // 添加任务函数选择事件：当选择函数时，自动生成示例参数JSON或显示特定的表单
             taskFunction.addEventListener('change', function() {
                 const selectedOption = this.options[this.selectedIndex];
                 if (selectedOption.value) {
                     const parametersAttr = selectedOption.getAttribute('data-parameters');
+                    
+                    // 隐藏HTTP请求表单和普通参数输入区域
+                    document.getElementById('httpRequestForm').style.display = 'none';
+                    document.getElementById('normalArgsSection').style.display = 'block';
+                    
+                    // 特殊处理HTTP请求函数
+                    if (selectedOption.value === 'http_request') {
+                        document.getElementById('httpRequestForm').style.display = 'block';
+                        document.getElementById('normalArgsSection').style.display = 'none';
+                        
+                        // 重置HTTP请求表单
+                        document.getElementById('httpUrl').value = '';
+                        document.getElementById('httpMethod').value = 'GET';
+                        document.getElementById('httpHeaders').value = '{}';
+                        document.getElementById('httpBody').value = '';
+                        document.getElementById('httpTimeout').value = '30';
+                        document.getElementById('httpVerify').checked = true;
+                        
+                        // 根据请求方法类型显示/隐藏请求体
+                        updateBodyVisibility();
+                        return;
+                    }
+                    
                     if (parametersAttr) {
                         try {
                             const parameters = JSON.parse(parametersAttr);
@@ -891,17 +914,27 @@ function loadFunctions() {
                                 parameters.forEach(param => {
                                     if ('default' in param) {
                                         exampleArgs[param.name] = param.default;
+                                    } else {
+                                        // 为没有默认值的参数提供示例值
+                                        exampleArgs[param.name] = null;
                                     }
                                 });
                                 
-                                // 如果有默认参数，设置到文本域
+                                // 如果有参数，设置到文本域
                                 if (Object.keys(exampleArgs).length > 0) {
                                     document.getElementById('taskArgs').value = JSON.stringify(exampleArgs, null, 2);
+                                } else {
+                                    document.getElementById('taskArgs').value = '{}';
                                 }
+                            } else {
+                                document.getElementById('taskArgs').value = '{}';
                             }
                         } catch (e) {
                             console.error('解析函数参数失败', e);
+                            document.getElementById('taskArgs').value = '{}';
                         }
+                    } else {
+                        document.getElementById('taskArgs').value = '{}';
                     }
                 }
             });
@@ -910,6 +943,19 @@ function loadFunctions() {
             console.error('Error loading functions:', error);
             showError('加载任务函数列表失败');
         });
+}
+
+// 根据HTTP请求方法类型更新请求体输入框的可见性
+function updateBodyVisibility() {
+    const method = document.getElementById('httpMethod').value;
+    const bodyContainer = document.getElementById('httpBodyContainer');
+    
+    // 对于GET、HEAD、OPTIONS方法，通常不需要请求体
+    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+        bodyContainer.style.display = 'none';
+    } else {
+        bodyContainer.style.display = 'block';
+    }
 }
 
 // 加载任务列表
@@ -981,6 +1027,45 @@ function viewTaskDetail(taskId) {
                 return;
             }
             
+            // 格式化参数显示
+            let argsHtml = '';
+            
+            // 特殊处理HTTP请求任务
+            if (task.function === 'http_request') {
+                const args = task.args;
+                argsHtml = `
+                <div class="card mt-2">
+                    <div class="card-header">
+                        <strong>${args.method || 'GET'} ${escapeHtml(args.url || '')}</strong>
+                    </div>
+                    <div class="card-body">
+                        <h6>请求头:</h6>
+                        <pre class="bg-light p-2 rounded">${escapeHtml(JSON.stringify(args.headers || {}, null, 2))}</pre>
+                        
+                        ${(args.method !== 'GET' && args.method !== 'HEAD' && args.method !== 'OPTIONS' && args.body) ? `
+                        <h6>请求体:</h6>
+                        <pre class="bg-light p-2 rounded">${escapeHtml(typeof args.body === 'object' ? JSON.stringify(args.body, null, 2) : args.body)}</pre>
+                        ` : ''}
+                        
+                        <div class="row mt-2">
+                            <div class="col-md-6">
+                                <small class="text-muted">超时: ${args.timeout || 30} 秒</small>
+                            </div>
+                            <div class="col-md-6">
+                                <small class="text-muted">验证SSL: ${args.verify === false ? '否' : '是'}</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+            } else {
+                // 普通任务参数
+                try {
+                    argsHtml = `<pre class="bg-light p-2 rounded">${escapeHtml(JSON.stringify(task.args, null, 2))}</pre>`;
+                } catch (e) {
+                    argsHtml = `<pre class="bg-light p-2 rounded">${escapeHtml(JSON.stringify({}, null, 2))}</pre>`;
+                }
+            }
+            
             // 构建详情HTML
             let html = `
             <table class="detail-table">
@@ -1016,55 +1101,30 @@ function viewTaskDetail(taskId) {
                     <th>运行次数</th>
                     <td>${task.run_count}</td>
                 </tr>
-            `;
-            
-            // 如果有间隔配置
-            if (task.interval) {
-                html += `
-                <tr>
-                    <th>执行间隔（秒）</th>
-                    <td>${task.interval}</td>
-                </tr>
-                `;
-            }
-            
-            // 如果有Cron配置
-            if (task.cron) {
-                html += `
-                <tr>
-                    <th>Cron表达式</th>
-                    <td>${escapeHtml(task.cron)}</td>
-                </tr>
-                `;
-            }
-            
-            // 如果有开始时间
-            if (task.start_time) {
-                html += `
-                <tr>
-                    <th>开始时间</th>
-                    <td>${formatDateTime(task.start_time)}</td>
-                </tr>
-                `;
-            }
-            
-            // 如果有结束时间
-            if (task.end_time) {
-                html += `
-                <tr>
-                    <th>结束时间</th>
-                    <td>${formatDateTime(task.end_time)}</td>
-                </tr>
-                `;
-            }
-            
-            // 函数参数
-            html += `
                 <tr>
                     <th>函数参数</th>
-                    <td><pre class="json">${JSON.stringify(task.args, null, 2)}</pre></td>
+                    <td>${argsHtml}</td>
                 </tr>
             </table>
+            
+            <div class="mt-3 d-flex gap-2">
+                ${task.status !== 'running' ? 
+                `<button class="btn btn-success" onclick="openStartTaskModal('${task.id}')">
+                    <i class="fas fa-play"></i> 启动任务
+                </button>
+                <button class="btn btn-primary" onclick="executeTask('${task.id}')">
+                    <i class="fas fa-bolt"></i> 立即执行
+                </button>` : ''}
+                
+                ${task.status === 'running' ? 
+                `<button class="btn btn-warning" onclick="stopTask('${task.id}')">
+                    <i class="fas fa-stop"></i> 停止任务
+                </button>` : ''}
+                
+                <button class="btn btn-secondary" onclick="viewTaskLogs('${task.id}', '${escapeHtml(task.name)}')">
+                    <i class="fas fa-list-alt"></i> 查看日志
+                </button>
+            </div>
             `;
             
             document.getElementById('taskDetailContent').innerHTML = html;
@@ -1219,17 +1279,6 @@ function createTask() {
     const functionName = document.getElementById('taskFunction').value;
     let args = {};
     
-    // 解析JSON参数
-    const argsText = document.getElementById('taskArgs').value.trim();
-    if (argsText) {
-        try {
-            args = JSON.parse(argsText);
-        } catch (e) {
-            showError('函数参数格式不正确，请输入有效的JSON格式');
-            return;
-        }
-    }
-    
     // 验证输入
     if (!name) {
         showError('请输入任务名称');
@@ -1239,6 +1288,60 @@ function createTask() {
     if (!functionName) {
         showError('请选择任务函数');
         return;
+    }
+    
+    // 特殊处理HTTP请求
+    if (functionName === 'http_request') {
+        const url = document.getElementById('httpUrl').value.trim();
+        if (!url) {
+            showError('请输入请求URL');
+            return;
+        }
+        
+        args.url = url;
+        args.method = document.getElementById('httpMethod').value;
+        
+        // 解析请求头JSON
+        const headersText = document.getElementById('httpHeaders').value.trim();
+        if (headersText) {
+            try {
+                args.headers = JSON.parse(headersText);
+            } catch (e) {
+                showError('请求头格式不正确，请输入有效的JSON格式');
+                return;
+            }
+        } else {
+            args.headers = {};
+        }
+        
+        // 解析请求体（仅对非GET请求）
+        if (args.method !== 'GET' && args.method !== 'HEAD' && args.method !== 'OPTIONS') {
+            const bodyText = document.getElementById('httpBody').value.trim();
+            if (bodyText) {
+                // 尝试解析为JSON对象
+                try {
+                    args.body = JSON.parse(bodyText);
+                } catch (e) {
+                    // 如果不是有效的JSON，则作为字符串处理
+                    args.body = bodyText;
+                }
+            }
+        }
+        
+        // 添加超时和SSL验证参数
+        args.timeout = parseInt(document.getElementById('httpTimeout').value) || 30;
+        args.verify = document.getElementById('httpVerify').checked;
+    } else {
+        // 解析JSON参数
+        const argsText = document.getElementById('taskArgs').value.trim();
+        if (argsText) {
+            try {
+                args = JSON.parse(argsText);
+            } catch (e) {
+                showError('函数参数格式不正确，请输入有效的JSON格式');
+                return;
+            }
+        }
     }
     
     // 构建请求数据
@@ -1269,6 +1372,8 @@ function createTask() {
         
         // 重置表单
         document.getElementById('createTaskForm').reset();
+        document.getElementById('httpRequestForm').style.display = 'none';
+        document.getElementById('normalArgsSection').style.display = 'block';
         
         // 提示成功
         showSuccess('任务创建成功');
@@ -1414,7 +1519,7 @@ function executeTask(taskId) {
 
 // 删除任务
 function deleteTask(taskId) {
-    if (!confirm('确定要删除此任务吗？此操作不可恢复。')) {
+    if (!confirm('确定要删除此任务吗？此操作不可恢复。如果该任务已被添加到任务组中，相关任务组也会同步更新。')) {
         return;
     }
     
@@ -1428,7 +1533,18 @@ function deleteTask(taskId) {
             return;
         }
         
-        showSuccess('任务已删除');
+        // 检查是否有受影响的任务组
+        if (data.affected_groups && data.affected_groups.length > 0) {
+            const groupNames = data.affected_groups.map(g => g.name).join(', ');
+            showSuccess(`任务已删除，并从以下任务组中移除: ${groupNames}`);
+            
+            // 刷新任务组列表
+            setTimeout(loadTaskGroups, 500);
+        } else {
+            showSuccess('任务已删除');
+        }
+        
+        // 刷新任务列表
         loadTasks();
     })
     .catch(error => {
